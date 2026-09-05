@@ -1,5 +1,5 @@
 import { Horizon } from "@stellar/stellar-sdk";
-import type { InvoiceStatus } from "./types.js";
+import type { Invoice, InvoiceStatus } from "./types.js";
 import { SearchFailedError } from "./errors.js";
 
 /** Query parameters for searching invoices. */
@@ -45,4 +45,47 @@ export async function searchInvoices(
   } catch (error) {
     throw new SearchFailedError(error instanceof Error ? error.message : String(error));
   }
+}
+
+/** Options for {@link searchByMemo}. */
+export interface SearchByMemoOptions {
+  /**
+   * When true, matching is case-sensitive. Defaults to false
+   * (case-insensitive).
+   */
+  caseSensitive?: boolean;
+}
+
+/**
+ * Search a local array of invoices by a substring of their optional memo.
+ *
+ * Invoices with no memo (`undefined` or `null`) are skipped without error.
+ * An empty `query` returns every invoice unchanged. The input array is never
+ * mutated; a new filtered array is returned (except for the empty-query fast
+ * path, which returns the array as-is per the specification).
+ *
+ * @param invoices - Local invoices to search.
+ * @param query    - Substring to look for inside each invoice's memo.
+ * @param opts     - Optional flags (e.g. `caseSensitive`).
+ * @returns A filtered array of matching invoices.
+ */
+export function searchByMemo(
+  invoices: Invoice[],
+  query: string,
+  opts: SearchByMemoOptions = {},
+): Invoice[] {
+  const caseSensitive = opts.caseSensitive ?? false;
+
+  if (query === "") {
+    return invoices;
+  }
+
+  const needle = caseSensitive ? query : query.toLowerCase();
+  return invoices.filter((invoice) => {
+    if (invoice.memo == null) {
+      return false;
+    }
+    const memo = caseSensitive ? invoice.memo : invoice.memo.toLowerCase();
+    return memo.includes(needle);
+  });
 }
