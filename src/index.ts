@@ -1427,3 +1427,12 @@ export type {
   SubmitTransactionOptions,
   SubmitServer,
 } from "./transaction/submit.js";
+
+// ---------------------------------------------------------------------------
+// #614 — searchByMemo (memo-content full-text search on local invoice arrays)
+// ---------------------------------------------------------------------------
+
+export { searchByMemo } from "./search.js";
+export type {
+  SearchByMemoOptions,
+} from "./search.js";
