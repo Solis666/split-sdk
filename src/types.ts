@@ -2080,3 +2080,66 @@ export interface SubentryCapacityError {
   /** The capacity result that triggered this error. */
   capacityResult: SubentryCapacityResult;
 }
+
+// ---------------------------------------------------------------------------
+// Protocol Stats Types (Issue #876)
+// ---------------------------------------------------------------------------
+
+/**
+ * On-chain global analytics snapshot for the StellarSplit protocol.
+ * Returned by {@link StellarSplitClient.getProtocolStats}.
+ */
+export interface ProtocolStats {
+  /** Total number of invoices ever created on-chain. */
+  totalInvoices: number;
+  /** Sum of all payment amounts received across all invoices (stroops). */
+  totalPaidAmount: bigint;
+  /** Sum of all amounts released to recipients across all invoices (stroops). */
+  totalReleasedAmount: bigint;
+  /** Sum of all amounts refunded to payers across all invoices (stroops). */
+  totalRefundedAmount: bigint;
+  /** Number of distinct invoice creator addresses. */
+  uniqueCreators: number;
+  /** Number of distinct payer addresses. */
+  uniquePayers: number;
+}
+
+/**
+ * A handle returned by {@link StellarSplitClient.subscribeProtocolStats}.
+ * Call {@link Subscription.unsubscribe} to stop polling.
+ */
+export interface ProtocolStatsSubscription {
+  /** Stop polling and release resources. */
+  unsubscribe(): void;
+}
+
+// ---------------------------------------------------------------------------
+// Note Types (Issue #875)
+// ---------------------------------------------------------------------------
+
+/**
+ * A note attached to an invoice, created via {@link StellarSplitClient.addNote}.
+ */
+export interface Note {
+  /** Zero-based sequential index of this note on the invoice. */
+  index: number;
+  /** The UTF-8 text content of the note (max 512 bytes). */
+  content: string;
+  /** When the note was created on-chain. */
+  timestamp: Date;
+}
+
+// ---------------------------------------------------------------------------
+// SDK Logger Interface (Issue #874)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal logger interface accepted by {@link StellarSplitClient.setLogger}.
+ * Compatible with `console`, `winston`, `pino`, and most popular loggers.
+ */
+export interface SdkLogger {
+  debug(message: string, ...args: unknown[]): void;
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+}

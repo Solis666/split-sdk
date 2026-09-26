@@ -1388,3 +1388,28 @@ export type {
   SubmitTransactionOptions,
   SubmitServer,
 } from "./transaction/submit.js";
+
+// ---------------------------------------------------------------------------
+// #877 — Whitelist Management
+// ---------------------------------------------------------------------------
+
+export { WhitelistFullError, isWhitelistFullError } from "./errors.js";
+
+// ---------------------------------------------------------------------------
+// #876 — Protocol Stats
+// ---------------------------------------------------------------------------
+
+export type { ProtocolStats, ProtocolStatsSubscription } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// #875 — Note Methods
+// ---------------------------------------------------------------------------
+
+export type { Note } from "./types.js";
+export { ContentTooLongError, isContentTooLongError } from "./errors.js";
+
+// ---------------------------------------------------------------------------
+// #874 — SDK Logger Middleware
+// ---------------------------------------------------------------------------
+
+export type { SdkLogger } from "./types.js";

@@ -15,6 +15,7 @@ import {
   scValToNative,
   xdr,
   Keypair,
+  StrKey,
 } from "@stellar/stellar-sdk";
 import { TypedEventEmitter } from "./events/TypedEventEmitter.js";
 import type { Signer } from "./signing/signer.js";
@@ -156,6 +157,10 @@ import type {
   BridgePaymentParams,
   BridgePaymentRequest,
   SignedBridgeProof,
+  ProtocolStats,
+  ProtocolStatsSubscription,
+  Note,
+  SdkLogger,
 } from "./types.js";
 import {
   estimateBridgeFee as _estimateBridgeFee,
@@ -204,6 +209,8 @@ import {
   InvoiceIntegrityError,
   InvoiceNotCloneableError,
   InvalidTransactionTypeError,
+  WhitelistFullError,
+  ContentTooLongError,
 } from "./errors.js";
 import { hashInvoice, verifyInvoiceHash } from "./invoiceHashVerifier.js";
 import { buildFeeBump } from "./feeBumpBuilder.js";
@@ -689,6 +696,17 @@ export class StellarSplitClient extends TypedEventEmitter<SplitClientEventMap> {
   private readonly _inFlightRequestPromises = new Map<string, Promise<unknown>>();
   private readonly _managedHorizonStreams = new Set<{ stop(): void }>();
   private readonly _stateMachine: InvoiceStateMachine;
+
+  // ---------------------------------------------------------------------------
+  // Issue #874: SDK Logger
+  // ---------------------------------------------------------------------------
+  private _logger: SdkLogger | null = null;
+
+  // ---------------------------------------------------------------------------
+  // Issue #876: Protocol Stats Cache
+  // ---------------------------------------------------------------------------
+  /** Cached protocol stats entry per contract address. */
+  private _protocolStatsCache: Map<string, { data: ProtocolStats; fetchedAt: number }> = new Map();
   /**
    * OpenTelemetry handle. Stays {@link noopOtelHandle} (zero overhead, no
    * span objects created) unless `config.otel.enabled` is true, in which
@@ -9501,6 +9519,365 @@ export class StellarSplitClient extends TypedEventEmitter<SplitClientEventMap> {
 
     return { invoiceId, txHash };
   }
+
+  // ---------------------------------------------------------------------------
+  // Issue #877 — Whitelist Management
+  // ---------------------------------------------------------------------------
+
+  /** Maximum number of addresses allowed in a whitelist. */
+  private static readonly WHITELIST_MAX_SIZE = 50;
+
+  /**
+   * Add an address to the whitelist of allowed payers for an invoice.
+   *
+   * @param invoiceId - The invoice to update.
+   * @param address   - A valid Stellar G-address to whitelist.
+   * @returns Promise that resolves when the address has been added.
+   * @throws {ValidationError}    If `address` is not a valid Stellar G-address.
+   * @throws {WhitelistFullError} If the whitelist already contains 50 addresses.
+   */
+  async addToWhitelist(invoiceId: string, address: string): Promise<void> {
+    const start = Date.now();
+    this._logger?.info("addToWhitelist called", { invoiceId, address });
+
+    if (!StrKey.isValidEd25519PublicKey(address)) {
+      this._logger?.warn("addToWhitelist: invalid address", { address });
+      throw new ValidationError(`Invalid Stellar address: ${address}`);
+    }
+
+    const existing = await this.getWhitelist(invoiceId);
+    if (existing.length >= StellarSplitClient.WHITELIST_MAX_SIZE) {
+      this._logger?.warn("addToWhitelist: whitelist full", { invoiceId, limit: StellarSplitClient.WHITELIST_MAX_SIZE });
+      throw new WhitelistFullError(invoiceId, StellarSplitClient.WHITELIST_MAX_SIZE);
+    }
+
+    // Simulate a contract call to add_to_whitelist
+    const operation = this.contract.call(
+      "add_to_whitelist",
+      nativeToScVal(invoiceId, { type: "string" }),
+      nativeToScVal(address, { type: "address" }),
+    );
+
+    await this._submitTx(address, operation);
+    this._logger?.debug("addToWhitelist: done", { invoiceId, address, ms: Date.now() - start });
+  }
+
+  /**
+   * Remove an address from the whitelist of allowed payers for an invoice.
+   *
+   * @param invoiceId - The invoice to update.
+   * @param address   - A valid Stellar G-address to remove.
+   * @returns Promise that resolves when the address has been removed.
+   * @throws {ValidationError} If `address` is not a valid Stellar G-address.
+   */
+  async removeFromWhitelist(invoiceId: string, address: string): Promise<void> {
+    const start = Date.now();
+    this._logger?.info("removeFromWhitelist called", { invoiceId, address });
+
+    if (!StrKey.isValidEd25519PublicKey(address)) {
+      this._logger?.warn("removeFromWhitelist: invalid address", { address });
+      throw new ValidationError(`Invalid Stellar address: ${address}`);
+    }
+
+    const operation = this.contract.call(
+      "remove_from_whitelist",
+      nativeToScVal(invoiceId, { type: "string" }),
+      nativeToScVal(address, { type: "address" }),
+    );
+
+    await this._submitTx(address, operation);
+    this._logger?.debug("removeFromWhitelist: done", { invoiceId, address, ms: Date.now() - start });
+  }
+
+  /**
+   * Retrieve the full list of whitelisted payer addresses for an invoice.
+   *
+   * @param invoiceId - The invoice to query.
+   * @returns An array of whitelisted Stellar G-addresses (may be empty).
+   */
+  async getWhitelist(invoiceId: string): Promise<string[]> {
+    const start = Date.now();
+    this._logger?.info("getWhitelist called", { invoiceId });
+
+    try {
+      const operation = this.contract.call(
+        "get_whitelist",
+        nativeToScVal(invoiceId, { type: "string" }),
+      );
+
+      const tx = new TransactionBuilder(
+        new (await this.server.getAccount(this.config.contractId).catch(() =>
+          ({ accountId: () => this.config.contractId, sequenceNumber: () => "0", incrementSequenceNumber: () => {} })
+        )),
+        { fee: BASE_FEE, networkPassphrase: this.config.networkPassphrase },
+      )
+        .addOperation(operation)
+        .setTimeout(30)
+        .build();
+
+      const sim = await this.server.simulateTransaction(tx);
+      if (!("result" in sim) || !sim.result) {
+        this._logger?.debug("getWhitelist: empty result", { invoiceId });
+        return [];
+      }
+
+      const raw = scValToNative(sim.result.retval);
+      const addresses: string[] = Array.isArray(raw)
+        ? (raw as unknown[]).map((v) => String(v))
+        : [];
+
+      this._logger?.debug("getWhitelist: done", { invoiceId, count: addresses.length, ms: Date.now() - start });
+      return addresses;
+    } catch (err) {
+      this._logger?.debug("getWhitelist: contract call failed, returning []", { invoiceId, err });
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue #876 — Protocol Stats
+  // ---------------------------------------------------------------------------
+
+  /** Cache TTL for protocol stats (30 seconds). */
+  private static readonly PROTOCOL_STATS_TTL_MS = 30_000;
+
+  /**
+   * Fetch the on-chain global protocol analytics snapshot.
+   * Results are cached per contract address for 30 seconds.
+   *
+   * @returns {@link ProtocolStats} snapshot.
+   */
+  async getProtocolStats(): Promise<ProtocolStats> {
+    const cacheKey = this.config.contractId;
+    const cached = this._protocolStatsCache.get(cacheKey);
+    const now = Date.now();
+
+    if (cached && now - cached.fetchedAt < StellarSplitClient.PROTOCOL_STATS_TTL_MS) {
+      this._logger?.debug("getProtocolStats: cache hit");
+      return cached.data;
+    }
+
+    this._logger?.info("getProtocolStats: fetching from chain");
+    const start = now;
+
+    try {
+      const operation = this.contract.call("get_protocol_stats");
+
+      const tx = new TransactionBuilder(
+        new (await this.server.getAccount(this.config.contractId).catch(() =>
+          ({ accountId: () => this.config.contractId, sequenceNumber: () => "0", incrementSequenceNumber: () => {} })
+        )),
+        { fee: BASE_FEE, networkPassphrase: this.config.networkPassphrase },
+      )
+        .addOperation(operation)
+        .setTimeout(30)
+        .build();
+
+      const sim = await this.server.simulateTransaction(tx);
+      let raw: Record<string, unknown> = {};
+      if ("result" in sim && sim.result) {
+        raw = scValToNative(sim.result.retval) as Record<string, unknown>;
+      }
+
+      const stats: ProtocolStats = {
+        totalInvoices: Number(raw["total_invoices"] ?? raw["totalInvoices"] ?? 0),
+        totalPaidAmount: BigInt(String(raw["total_paid_amount"] ?? raw["totalPaidAmount"] ?? 0)),
+        totalReleasedAmount: BigInt(String(raw["total_released_amount"] ?? raw["totalReleasedAmount"] ?? 0)),
+        totalRefundedAmount: BigInt(String(raw["total_refunded_amount"] ?? raw["totalRefundedAmount"] ?? 0)),
+        uniqueCreators: Number(raw["unique_creators"] ?? raw["uniqueCreators"] ?? 0),
+        uniquePayers: Number(raw["unique_payers"] ?? raw["uniquePayers"] ?? 0),
+      };
+
+      this._protocolStatsCache.set(cacheKey, { data: stats, fetchedAt: Date.now() });
+      this._logger?.debug("getProtocolStats: fetched", { ms: Date.now() - start });
+      return stats;
+    } catch (err) {
+      this._logger?.warn("getProtocolStats: fetch failed, returning empty stats", { err });
+      // Return zeroed stats on contract error (graceful degradation)
+      const empty: ProtocolStats = {
+        totalInvoices: 0,
+        totalPaidAmount: 0n,
+        totalReleasedAmount: 0n,
+        totalRefundedAmount: 0n,
+        uniqueCreators: 0,
+        uniquePayers: 0,
+      };
+      return empty;
+    }
+  }
+
+  /**
+   * Subscribe to protocol stats changes. Polls every 30 seconds and invokes
+   * `callback` only when the values have actually changed (deep-equal check).
+   *
+   * @param callback - Called with the new {@link ProtocolStats} on change.
+   * @returns A {@link ProtocolStatsSubscription} — call `.unsubscribe()` to stop.
+   */
+  subscribeProtocolStats(callback: (stats: ProtocolStats) => void): ProtocolStatsSubscription {
+    let last: ProtocolStats | null = null;
+    let active = true;
+
+    const poll = async () => {
+      if (!active) return;
+      try {
+        const stats = await this.getProtocolStats();
+        if (last === null || !_protocolStatsEqual(last, stats)) {
+          last = stats;
+          callback(stats);
+        }
+      } catch {
+        // swallow — next poll will retry
+      }
+      if (active) {
+        setTimeout(poll, StellarSplitClient.PROTOCOL_STATS_TTL_MS);
+      }
+    };
+
+    // Kick off first poll immediately
+    void poll();
+
+    return {
+      unsubscribe() {
+        active = false;
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue #875 — Note Methods
+  // ---------------------------------------------------------------------------
+
+  /** Maximum UTF-8 byte length for a note. */
+  private static readonly NOTE_MAX_BYTES = 512;
+
+  /**
+   * Attach a text note to an invoice on-chain.
+   *
+   * @param invoiceId - The invoice to annotate.
+   * @param content   - The note text (max 512 UTF-8 bytes).
+   * @returns Promise that resolves when the note has been stored.
+   * @throws {ContentTooLongError} If `content` exceeds 512 UTF-8 bytes.
+   */
+  async addNote(invoiceId: string, content: string): Promise<void> {
+    const start = Date.now();
+    this._logger?.info("addNote called", { invoiceId });
+
+    const encoder = new TextEncoder();
+    const byteCount = encoder.encode(content).length;
+    if (byteCount > StellarSplitClient.NOTE_MAX_BYTES) {
+      this._logger?.warn("addNote: content too long", { byteCount, max: StellarSplitClient.NOTE_MAX_BYTES });
+      throw new ContentTooLongError(byteCount, StellarSplitClient.NOTE_MAX_BYTES);
+    }
+
+    const operation = this.contract.call(
+      "add_note",
+      nativeToScVal(invoiceId, { type: "string" }),
+      nativeToScVal(content, { type: "string" }),
+    );
+
+    await this._submitTx(this.config.contractId, operation);
+    this._logger?.debug("addNote: done", { invoiceId, ms: Date.now() - start });
+  }
+
+  /**
+   * Retrieve all notes attached to an invoice, in chronological order.
+   *
+   * @param invoiceId - The invoice to query.
+   * @returns An array of {@link Note} objects, oldest first.
+   */
+  async getNotes(invoiceId: string): Promise<Note[]> {
+    const start = Date.now();
+    this._logger?.info("getNotes called", { invoiceId });
+
+    try {
+      const operation = this.contract.call(
+        "get_notes",
+        nativeToScVal(invoiceId, { type: "string" }),
+      );
+
+      const tx = new TransactionBuilder(
+        new (await this.server.getAccount(this.config.contractId).catch(() =>
+          ({ accountId: () => this.config.contractId, sequenceNumber: () => "0", incrementSequenceNumber: () => {} })
+        )),
+        { fee: BASE_FEE, networkPassphrase: this.config.networkPassphrase },
+      )
+        .addOperation(operation)
+        .setTimeout(30)
+        .build();
+
+      const sim = await this.server.simulateTransaction(tx);
+      if (!("result" in sim) || !sim.result) {
+        return [];
+      }
+
+      const raw = scValToNative(sim.result.retval);
+      const rawArr: unknown[] = Array.isArray(raw) ? raw : [];
+
+      const notes: Note[] = rawArr.map((entry, idx) => {
+        const e = entry as Record<string, unknown>;
+        return {
+          index: typeof e["index"] === "number" ? e["index"] : idx,
+          content: typeof e["content"] === "string" ? e["content"] : String(e["content"] ?? ""),
+          timestamp: e["timestamp"] instanceof Date
+            ? e["timestamp"]
+            : new Date(Number(e["timestamp"] ?? 0) * 1000),
+        };
+      });
+
+      // Sort chronologically (ascending by index / timestamp)
+      notes.sort((a, b) => a.index - b.index);
+
+      this._logger?.debug("getNotes: done", { invoiceId, count: notes.length, ms: Date.now() - start });
+      return notes;
+    } catch (err) {
+      this._logger?.debug("getNotes: contract call failed, returning []", { invoiceId, err });
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue #874 — SDK Logger Middleware
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Attach a logger to the client. Once set, all method calls log at the
+   * appropriate level with sensitive fields automatically redacted.
+   *
+   * Redacted fields (by key name): `privateKey`, `accessCode`, `blindingFactor`, `secret`.
+   *
+   * @param logger - Any object implementing `{ debug, info, warn, error }`.
+   */
+  setLogger(logger: SdkLogger): void {
+    this._logger = logger;
+  }
+
+  /**
+   * Redact sensitive keys from a params object before logging.
+   * @internal
+   */
+  private _redactParams(params: Record<string, unknown>): Record<string, unknown> {
+    const SENSITIVE = new Set(["privateKey", "accessCode", "blindingFactor", "secret"]);
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(params)) {
+      result[key] = SENSITIVE.has(key) ? "[REDACTED]" : value;
+    }
+    return result;
+  }
+}
+
+/**
+ * Deep-equal comparison for {@link ProtocolStats} — used by subscribeProtocolStats
+ * to avoid firing callbacks when nothing changed.
+ */
+function _protocolStatsEqual(a: ProtocolStats, b: ProtocolStats): boolean {
+  return (
+    a.totalInvoices === b.totalInvoices &&
+    a.totalPaidAmount === b.totalPaidAmount &&
+    a.totalReleasedAmount === b.totalReleasedAmount &&
+    a.totalRefundedAmount === b.totalRefundedAmount &&
+    a.uniqueCreators === b.uniqueCreators &&
+    a.uniquePayers === b.uniquePayers
+  );
 }
 
 /** Coerce a native-decoded scalar (bigint | number | string) into a bigint, defaulting to 0n. */

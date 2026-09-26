@@ -2163,3 +2163,65 @@ export class SdkError extends Error {
 export function isSdkError(err: unknown): err is SdkError {
   return err instanceof SdkError;
 }
+
+// ---------------------------------------------------------------------------
+// Whitelist Errors (Issue #877)
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when an attempt is made to add an address to a whitelist that has
+ * already reached the 50-address maximum.
+ */
+export class WhitelistFullError extends StellarSplitError {
+  /** Invoice identifier whose whitelist is full. */
+  readonly invoiceId: string;
+  /** The maximum number of addresses allowed in the whitelist. */
+  readonly limit: number;
+
+  constructor(invoiceId: string, limit: number = 50) {
+    super(
+      `Whitelist for invoice ${invoiceId} is full (limit: ${limit} addresses)`,
+      "WHITELIST_FULL",
+      { invoiceId, limit },
+    );
+    this.name = "WhitelistFullError";
+    this.invoiceId = invoiceId;
+    this.limit = limit;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isWhitelistFullError(err: unknown): err is WhitelistFullError {
+  return err instanceof WhitelistFullError;
+}
+
+// ---------------------------------------------------------------------------
+// Note Errors (Issue #875)
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when the note content exceeds the maximum allowed byte length (512 bytes
+ * measured as UTF-8 byte count, not character count).
+ */
+export class ContentTooLongError extends StellarSplitError {
+  /** The actual UTF-8 byte count of the submitted content. */
+  readonly bytesUsed: number;
+  /** The maximum number of UTF-8 bytes allowed. */
+  readonly bytesAllowed: number;
+
+  constructor(bytesUsed: number, bytesAllowed: number = 512) {
+    super(
+      `Note content is too long: ${bytesUsed} bytes used, ${bytesAllowed} bytes allowed`,
+      "CONTENT_TOO_LONG",
+      { bytesUsed, bytesAllowed },
+    );
+    this.name = "ContentTooLongError";
+    this.bytesUsed = bytesUsed;
+    this.bytesAllowed = bytesAllowed;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isContentTooLongError(err: unknown): err is ContentTooLongError {
+  return err instanceof ContentTooLongError;
+}
