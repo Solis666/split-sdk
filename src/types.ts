@@ -247,6 +247,42 @@ export class HealthCheckTimeoutError extends StellarSplitError {
 /**
  * Basic invoice data structure mirroring the Soroban contract.
  */
+
+/**
+ * Policy used to gate access to an invoice based on a minimum token balance.
+ *
+ * When `validFrom` or `validUntil` are provided the gate is only active
+ * during that time window. Outside the window the gate evaluates to `false`
+ * regardless of the caller's balance.
+ */
+export interface TokenGatePolicy {
+  /**
+   * The asset to check, in "CODE:ISSUER" format or "native" for XLM.
+   * @example "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+   */
+  asset: string;
+  /**
+   * Minimum balance required to pass the gate, as a decimal string.
+   * @example "10.0000000"
+   */
+  minBalance: string;
+  /**
+   * When `false`, a balance shortfall emits a warning instead of throwing.
+   * Defaults to `true`.
+   */
+  strict?: boolean;
+  /**
+   * Optional start of the gate's active window. Before this date the gate
+   * always returns `false` (or warns in non-strict mode).
+   */
+  validFrom?: Date;
+  /**
+   * Optional end of the gate's active window. After this date the gate
+   * always returns `false` (or warns in non-strict mode).
+   */
+  validUntil?: Date;
+}
+
 /** An on-chain StellarSplit invoice. */
 export interface Invoice {
   /** Invoice ID (u64 from the contract). */
@@ -290,6 +326,15 @@ export interface Invoice {
   groupId?: string;
   /** Ledger sequence when this invoice was last modified. */
   lastModifiedLedger?: number;
+  /**
+   * Optional free-form labels used for tag-based querying via
+   * `client.queryInvoices({ tags: [...] })`.
+   *
+   * When omitted, the query engine falls back to parsing `#hashtags` out of
+   * `memo`, so invoices created with a tagged memo are queryable without any
+   * contract change.
+   */
+  tags?: string[];
   /** IDs of invoices that must be paid before this one. */
   prerequisites?: string[];
   /** ID of the parent invoice this was cloned from (clone chain). */
@@ -451,6 +496,12 @@ export interface CreateInvoiceParams {
   /** Optional memo / description. */
   memo?: string;
   /**
+   * When `true`, simulate the transaction against Soroban RPC instead of
+   * submitting it, and resolve with a {@link SimulationResult} (issue #844).
+   * @default false
+   */
+  simulate?: boolean;
+  /**
    * When `true`, skip the `RecipientBalancePreCheck` that normally runs
    * before the invoice is submitted. Use only for advanced flows where you
    * have already validated recipients independently.
@@ -499,6 +550,12 @@ export interface PayParams {
    * fails to reach its goal. Defaults to false.
    */
   donateOnFailure?: boolean;
+  /**
+   * When `true`, simulate the payment against Soroban RPC instead of
+   * submitting it, and resolve with a {@link SimulationResult} (issue #844).
+   * @default false
+   */
+  simulate?: boolean;
 }
 
 /** @deprecated Use PayParams instead. */
@@ -751,7 +808,48 @@ export interface CloneOverrides {
    * recipient account lookups.
    */
   horizonUrl?: string;
+  /**
+   * Optional new title/memo stored on the cloned invoice.
+   * Serialised as the `new_title` entry of the clone override map (issue #850).
+   */
+  newTitle?: string;
 }
+
+/**
+ * Field-level overrides accepted by {@link StellarSplitClient.cloneInvoice}
+ * (issue #850). These are mapped onto the contract's `clone_invoice` override
+ * map after validation, mirroring the checks applied by `createInvoice`.
+ */
+export interface InvoiceParamOverrides {
+  /** Optional new title/memo for the cloned invoice (non-empty string). */
+  title?: string;
+  /** Optional new deadline as a future unix timestamp in seconds. */
+  deadline?: number;
+  /** Optional new total target amount in stroops (positive bigint). */
+  targetAmount?: bigint;
+  /** Optional replacement recipient addresses (must be valid Stellar addresses). */
+  recipients?: string[];
+}
+
+/**
+ * Options accepted by mutating methods to request a dry-run simulation
+ * against Soroban RPC instead of submitting a transaction (issue #844).
+ */
+export interface SimulateMutationOptions {
+  /**
+   * When `true`, the transaction is simulated and never submitted, and the
+   * method resolves with a {@link SimulationResult}.
+   * @default false
+   */
+  simulate?: boolean;
+}
+
+/**
+ * Result of a mutating client method that supports `{ simulate: true }`.
+ * Resolves with the real submission result, or a {@link SimulationResult}
+ * when simulation was requested.
+ */
+export type MaybeSimulated<T> = T | SimulationResult;
 
 /** Field names supported by read methods that can return partial objects. */
 export type InvoiceField = keyof Invoice;
@@ -1960,6 +2058,13 @@ export interface CollectionPage<T> {
 export interface HorizonPaginatorOptions {
   /** Maximum number of records to yield across all pages. Default: unlimited. */
   maxRecords?: number;
+  /**
+   * The page size that was passed to the Horizon call builder's `.limit()`
+   * method. The paginator uses this to detect when the server has silently
+   * capped the page size and adapts `effectivePageSize` accordingly.
+   * Default: 200.
+   */
+  pageSize?: number;
   /** Optional cursor store for persisting the last-seen paging token. */
   cursorStore?: CursorStore;
   /** Optional namespace for cursor storage keys (default: "horizon"). */
@@ -2082,64 +2187,92 @@ export interface SubentryCapacityError {
 }
 
 // ---------------------------------------------------------------------------
-// Protocol Stats Types (Issue #876)
+// Claimable Balance Lifecycle Types
 // ---------------------------------------------------------------------------
 
-/**
- * On-chain global analytics snapshot for the StellarSplit protocol.
- * Returned by {@link StellarSplitClient.getProtocolStats}.
- */
-export interface ProtocolStats {
-  /** Total number of invoices ever created on-chain. */
-  totalInvoices: number;
-  /** Sum of all payment amounts received across all invoices (stroops). */
-  totalPaidAmount: bigint;
-  /** Sum of all amounts released to recipients across all invoices (stroops). */
-  totalReleasedAmount: bigint;
-  /** Sum of all amounts refunded to payers across all invoices (stroops). */
-  totalRefundedAmount: bigint;
-  /** Number of distinct invoice creator addresses. */
-  uniqueCreators: number;
-  /** Number of distinct payer addresses. */
-  uniquePayers: number;
-}
+/** Lifecycle status of a tracked claimable balance. */
+export type ClaimableBalanceStatus = "created" | "claimed" | "expired";
 
-/**
- * A handle returned by {@link StellarSplitClient.subscribeProtocolStats}.
- * Call {@link Subscription.unsubscribe} to stop polling.
- */
-export interface ProtocolStatsSubscription {
-  /** Stop polling and release resources. */
-  unsubscribe(): void;
+/** A claimable balance record tracked by {@link ClaimableBalanceLifecycle}. */
+export interface ClaimableBalanceRecord {
+  /** Stellar claimable balance ID (e.g. `00000000…`). */
+  balanceId: string;
+  /** Stellar address of the account that can claim this balance. */
+  claimant: string;
+  /** Asset descriptor: `"native"` for XLM, `"CODE:ISSUER"` for issued assets. */
+  asset: string;
+  /** Human-readable amount string (e.g. `"12.5000000"`). */
+  amount: string;
+  /** Current lifecycle status. */
+  status: ClaimableBalanceStatus;
+  /** Unix epoch ms when the balance was created / first tracked. */
+  createdAt: number;
+  /** Unix epoch ms when the balance was claimed, or `null` if not yet claimed. */
+  claimedAt: number | null;
+  /** Ledger sequence after which the predicate expires (optional). */
+  predicateExpiryLedger?: number;
 }
 
 // ---------------------------------------------------------------------------
-// Note Types (Issue #875)
+// Invoice Rating Types (Issue #865)
 // ---------------------------------------------------------------------------
 
-/**
- * A note attached to an invoice, created via {@link StellarSplitClient.addNote}.
- */
-export interface Note {
-  /** Zero-based sequential index of this note on the invoice. */
-  index: number;
-  /** The UTF-8 text content of the note (max 512 bytes). */
-  content: string;
-  /** When the note was created on-chain. */
-  timestamp: Date;
+/** Creator rating information. */
+export interface CreatorRating {
+  /** Total number of ratings received by the creator. */
+  totalRatings: bigint;
+  /** Average star rating as a float (e.g. 4.3). */
+  averageStars: number;
 }
 
 // ---------------------------------------------------------------------------
-// SDK Logger Interface (Issue #874)
+// Deadline Extension Types (Issue #864)
 // ---------------------------------------------------------------------------
 
-/**
- * Minimal logger interface accepted by {@link StellarSplitClient.setLogger}.
- * Compatible with `console`, `winston`, `pino`, and most popular loggers.
- */
-export interface SdkLogger {
-  debug(message: string, ...args: unknown[]): void;
-  info(message: string, ...args: unknown[]): void;
-  warn(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
+/** Extension status for an invoice deadline. */
+export interface ExtensionStatus {
+  /** Current number of votes for extension. */
+  voteCount: bigint;
+  /** Minimum number of votes required (quorum). */
+  quorumRequired: bigint;
+  /** Number of times the deadline has been extended. */
+  extensionCount: bigint;
+  /** Maximum allowed extensions. */
+  maxExtensions: bigint;
+  /** Current deadline timestamp. */
+  currentDeadline: bigint;
+}
+
+// ---------------------------------------------------------------------------
+// Group Management Types (Issue #863)
+// ---------------------------------------------------------------------------
+
+/** Statistics for an invoice group. */
+export interface GroupStats {
+  /** Group name. */
+  name: string;
+  /** Total target amount for all invoices in the group. */
+  totalTarget: bigint;
+  /** Total funded amount for all invoices in the group. */
+  totalFunded: bigint;
+  /** Number of invoices in the group. */
+  invoiceCount: bigint;
+  /** Number of fully funded invoices in the group. */
+  fullyFundedCount: bigint;
+}
+
+// ---------------------------------------------------------------------------
+// Attestation Types (Issue #862)
+// ---------------------------------------------------------------------------
+
+/** Invoice attestation record. */
+export interface Attestation {
+  /** Address of the attester. */
+  attester: string;
+  /** Attestation statement (max 256 chars). */
+  statement: string;
+  /** Unix timestamp when the attestation was created. */
+  timestamp: bigint;
+  /** Whether the attestation has been revoked. */
+  revoked: boolean;
 }

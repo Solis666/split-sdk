@@ -1578,6 +1578,38 @@ export class PassphraseMismatchError extends StellarSplitError {
   }
 }
 
+/**
+ * Thrown when the passphrase of the requested network preset does not match the
+ * passphrase reported by the live Soroban RPC endpoint, so the switch is
+ * rejected and the client stays on its current network.
+ *
+ * Carries both sides of the comparison so callers can surface them without
+ * parsing the message: `expected` is the preset passphrase and `actual` is what
+ * the RPC node reported.
+ */
+export class NetworkMismatchError extends StellarSplitError {
+  /** The passphrase configured by the requested network preset. */
+  readonly expected: string;
+  /** The passphrase reported by the live RPC endpoint. */
+  readonly actual: string;
+
+  constructor(expected: string, actual: string) {
+    super(
+      `Network passphrase mismatch: expected [${expected}] but the RPC node reported [${actual}].`,
+      "NETWORK_MISMATCH",
+      { expected, actual }
+    );
+    this.name = "NetworkMismatchError";
+    this.expected = expected;
+    this.actual = actual;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isNetworkMismatchError(err: unknown): err is NetworkMismatchError {
+  return err instanceof NetworkMismatchError;
+}
+
 // ---------------------------------------------------------------------------
 // Sequence cache errors
 // ---------------------------------------------------------------------------
@@ -2109,6 +2141,53 @@ export class StellarTomlFetchError extends StellarSplitError {
   }
 }
 
+/**
+ * Thrown when a TLS certificate fingerprint for an anchor HTTPS endpoint does
+ * not match the configured pinned fingerprint (#780).
+ *
+ * The fingerprint should be a colon-separated uppercase hex string in the
+ * standard `openssl` format, e.g. `"AA:BB:CC:..."`.
+ */
+export class CertificatePinningError extends StellarSplitError {
+  readonly domain: string;
+  readonly expectedFingerprint: string;
+  readonly actualFingerprint: string;
+
+  constructor(domain: string, expectedFingerprint: string, actualFingerprint: string) {
+    super(
+      `Certificate fingerprint mismatch for domain "${domain}": ` +
+        `expected "${expectedFingerprint}", got "${actualFingerprint}"`,
+      "CERTIFICATE_PINNING_ERROR",
+      { domain, expectedFingerprint, actualFingerprint },
+    );
+    this.name = "CertificatePinningError";
+    this.domain = domain;
+    this.expectedFingerprint = expectedFingerprint;
+    this.actualFingerprint = actualFingerprint;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * Thrown when a `stellar.toml` file carries a VERSION that is not listed in
+ * {@link SUPPORTED_TOML_VERSIONS} (#779).
+ */
+export class UnsupportedTomlVersionError extends StellarSplitError {
+  readonly encounteredVersion: string;
+
+  constructor(encounteredVersion: string) {
+    super(
+      `Unsupported stellar.toml VERSION "${encounteredVersion}". ` +
+        `Supported versions: ${JSON.stringify([2.0, 2.1])}`,
+      "UNSUPPORTED_TOML_VERSION",
+      { encounteredVersion },
+    );
+    this.name = "UnsupportedTomlVersionError";
+    this.encounteredVersion = encounteredVersion;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 /** Thrown when all channel accounts in the pool are busy and the acquire timeout elapses. */
 export class ChannelExhaustedError extends StellarSplitError {
   readonly poolSize: number;
@@ -2165,63 +2244,115 @@ export function isSdkError(err: unknown): err is SdkError {
 }
 
 // ---------------------------------------------------------------------------
-// Whitelist Errors (Issue #877)
+// Three-way merge errors (issue #703)
 // ---------------------------------------------------------------------------
 
 /**
- * Thrown when an attempt is made to add an address to a whitelist that has
- * already reached the 50-address maximum.
+ * Thrown by {@link mergeInvoices} when both local and remote branches have
+ * modified the same field relative to the common base, producing a conflict
+ * that cannot be resolved automatically.
  */
-export class WhitelistFullError extends StellarSplitError {
-  /** Invoice identifier whose whitelist is full. */
-  readonly invoiceId: string;
-  /** The maximum number of addresses allowed in the whitelist. */
-  readonly limit: number;
+export class MergeConflictError extends StellarSplitError {
+  /** The invoice field that caused the conflict. */
+  readonly field: string;
+  /** The value of the field on the base (common ancestor) invoice. */
+  readonly baseValue: unknown;
+  /** The value of the field on the local branch. */
+  readonly localValue: unknown;
+  /** The value of the field on the remote branch. */
+  readonly remoteValue: unknown;
 
-  constructor(invoiceId: string, limit: number = 50) {
+  constructor(
+    field: string,
+    baseValue: unknown,
+    localValue: unknown,
+    remoteValue: unknown,
+  ) {
     super(
-      `Whitelist for invoice ${invoiceId} is full (limit: ${limit} addresses)`,
-      "WHITELIST_FULL",
-      { invoiceId, limit },
+      `Merge conflict on field "${field}": both branches diverged from base`,
+      "MERGE_CONFLICT",
+      {
+        field,
+        baseValue: typeof baseValue === "bigint" ? baseValue.toString() : baseValue,
+        localValue: typeof localValue === "bigint" ? localValue.toString() : localValue,
+        remoteValue: typeof remoteValue === "bigint" ? remoteValue.toString() : remoteValue,
+      },
     );
-    this.name = "WhitelistFullError";
-    this.invoiceId = invoiceId;
-    this.limit = limit;
+    this.name = "MergeConflictError";
+    this.field = field;
+    this.baseValue = baseValue;
+    this.localValue = localValue;
+    this.remoteValue = remoteValue;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
-export function isWhitelistFullError(err: unknown): err is WhitelistFullError {
-  return err instanceof WhitelistFullError;
+export function isMergeConflictError(err: unknown): err is MergeConflictError {
+  return err instanceof MergeConflictError;
 }
 
 // ---------------------------------------------------------------------------
-// Note Errors (Issue #875)
+// Keypair format and signing validation errors (issue #768)
 // ---------------------------------------------------------------------------
 
 /**
- * Thrown when the note content exceeds the maximum allowed byte length (512 bytes
- * measured as UTF-8 byte count, not character count).
+ * Thrown when a KeypairSigner is constructed with an invalid secret key or keypair.
  */
-export class ContentTooLongError extends StellarSplitError {
-  /** The actual UTF-8 byte count of the submitted content. */
-  readonly bytesUsed: number;
-  /** The maximum number of UTF-8 bytes allowed. */
-  readonly bytesAllowed: number;
-
-  constructor(bytesUsed: number, bytesAllowed: number = 512) {
-    super(
-      `Note content is too long: ${bytesUsed} bytes used, ${bytesAllowed} bytes allowed`,
-      "CONTENT_TOO_LONG",
-      { bytesUsed, bytesAllowed },
-    );
-    this.name = "ContentTooLongError";
-    this.bytesUsed = bytesUsed;
-    this.bytesAllowed = bytesAllowed;
+export class InvalidKeypairError extends StellarSplitError {
+  constructor(message: string, context?: Record<string, unknown>, raw?: string) {
+    super(message, "INVALID_KEYPAIR", context, raw);
+    this.name = "InvalidKeypairError";
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
-export function isContentTooLongError(err: unknown): err is ContentTooLongError {
-  return err instanceof ContentTooLongError;
+export function isInvalidKeypairError(err: unknown): err is InvalidKeypairError {
+  return err instanceof InvalidKeypairError;
 }
+
+/** Thrown when a wallet deep-link or extension connection times out. */
+export class WalletConnectionTimeoutError extends StellarSplitError {
+  readonly timeoutMs: number;
+
+  constructor(message: string, opts: { timeoutMs: number }) {
+    super(
+      message,
+      "WALLET_CONNECTION_TIMEOUT",
+      opts,
+    );
+    this.name = "WalletConnectionTimeoutError";
+    this.timeoutMs = opts.timeoutMs;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isWalletConnectionTimeoutError(err: unknown): err is WalletConnectionTimeoutError {
+  return err instanceof WalletConnectionTimeoutError;
+}
+
+// ---------------------------------------------------------------------------
+// Batch operations errors
+// ---------------------------------------------------------------------------
+
+/** Thrown when a batch operation exceeds the maximum allowed size. */
+export class BatchTooLargeError extends StellarSplitError {
+  readonly batchSize: number;
+  readonly maxSize: number;
+
+  constructor(batchSize: number, maxSize: number = 20) {
+    super(
+      `Batch size ${batchSize} exceeds maximum of ${maxSize}`,
+      "BATCH_TOO_LARGE",
+      { batchSize, maxSize },
+    );
+    this.name = "BatchTooLargeError";
+    this.batchSize = batchSize;
+    this.maxSize = maxSize;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isBatchTooLargeError(err: unknown): err is BatchTooLargeError {
+  return err instanceof BatchTooLargeError;
+}
+
