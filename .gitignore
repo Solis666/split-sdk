@@ -87,3 +87,22 @@ task2.md
 task3.md
 task4.md
 somzilla.md
+
+# Test snapshot directories (all naming variants)
+**/__snapshots__/
+*.snap
+*.snapshot
+*.snapshot.json
+testsnapshot/
+testSnapshot/
+test-snapshot/
+test-snapshots/
+snapshots/
+
+# Vitest / Jest cache
+.vitest-cache/
+.jest-cache/
+
+# Lock files (keep package-lock.json but ignore others)
+yarn.lock
+pnpm-lock.yaml

@@ -15,6 +15,7 @@ import {
   scValToNative,
   xdr,
   Keypair,
+  StrKey,
 } from "@stellar/stellar-sdk";
 import { TypedEventEmitter } from "./events/TypedEventEmitter.js";
 import type { Signer } from "./signing/signer.js";
@@ -746,6 +747,17 @@ export class StellarSplitClient extends TypedEventEmitter<SplitClientEventMap> {
   private _activePreset: NetworkPreset | null = null;
   private readonly _managedHorizonStreams = new Set<{ stop(): void }>();
   private readonly _stateMachine: InvoiceStateMachine;
+
+  // ---------------------------------------------------------------------------
+  // Issue #874: SDK Logger
+  // ---------------------------------------------------------------------------
+  private _logger: SdkLogger | null = null;
+
+  // ---------------------------------------------------------------------------
+  // Issue #876: Protocol Stats Cache
+  // ---------------------------------------------------------------------------
+  /** Cached protocol stats entry per contract address. */
+  private _protocolStatsCache: Map<string, { data: ProtocolStats; fetchedAt: number }> = new Map();
   /**
    * OpenTelemetry handle. Stays {@link noopOtelHandle} (zero overhead, no
    * span objects created) unless `config.otel.enabled` is true, in which
