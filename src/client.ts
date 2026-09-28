@@ -38,6 +38,8 @@ export type SplitClientEventMap = {
   "endpoint:demoted": { url: string; reason: "consecutive_errors" | "failed_health_check" };
   /** A previously quarantined RpcLoadBalancer endpoint passed its health check and rejoined rotation. */
   "endpoint:reinstated": { url: string };
+  /** Emitted after a successful cancelInvoice() call (#872). */
+  "invoice:cancelled": { invoiceId: string };
 };
 import { signTransaction } from "./wallet.js";
 import { telemetry } from "./telemetry.js";
@@ -156,6 +158,9 @@ import type {
   BridgePaymentParams,
   BridgePaymentRequest,
   SignedBridgeProof,
+  PartialReleaseResult,
+  TtlInfo,
+  VelocityBucket,
 } from "./types.js";
 import {
   estimateBridgeFee as _estimateBridgeFee,
@@ -204,6 +209,10 @@ import {
   InvoiceIntegrityError,
   InvoiceNotCloneableError,
   InvalidTransactionTypeError,
+  InvalidBpsError,
+  OverReleaseError,
+  CannotCancelFundedInvoiceError,
+  InvoiceTerminatedError,
 } from "./errors.js";
 import { hashInvoice, verifyInvoiceHash } from "./invoiceHashVerifier.js";
 import { buildFeeBump } from "./feeBumpBuilder.js";
@@ -9501,6 +9510,339 @@ export class StellarSplitClient extends TypedEventEmitter<SplitClientEventMap> {
 
     return { invoiceId, txHash };
   }
+
+  // ---------------------------------------------------------------------------
+  // Issue #873 — releasePartial: basis-point validated partial release
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Release a partial amount of an invoice's held funds expressed as
+   * basis points (1 bps = 0.01%). Performs client-side validation before
+   * submitting the `release_partial` contract entry point.
+   *
+   * @param invoiceId - The invoice to partially release.
+   * @param bps - Basis points to release (1–10 000 inclusive).
+   * @returns PartialReleaseResult with per-call and running totals.
+   * @throws {InvalidBpsError} When `bps` is outside the valid range.
+   * @throws {OverReleaseError} When adding `bps` would push `totalReleasedBps` past 10 000.
+   */
+  async releasePartial(invoiceId: string, bps: number): Promise<PartialReleaseResult> {
+    // Client-side guard: bps must be 1–10000
+    if (!Number.isInteger(bps) || bps < 1 || bps > 10_000) {
+      throw new InvalidBpsError(bps);
+    }
+
+    // Fetch current state to check accumulated totalReleasedBps
+    const invoice = await this._fetchInvoice(invoiceId);
+    const invoiceRecord = invoice as unknown as Record<string, unknown>;
+    const currentTotalBps: number =
+      typeof invoiceRecord.totalReleasedBps === "number"
+        ? (invoiceRecord.totalReleasedBps as number)
+        : 0;
+
+    if (currentTotalBps + bps > 10_000) {
+      throw new OverReleaseError(invoiceId, currentTotalBps, bps);
+    }
+
+    const operation = this.contract.call(
+      "release_partial",
+      nativeToScVal(BigInt(invoiceId), { type: "u64" }),
+      nativeToScVal(bps, { type: "u32" }),
+    );
+
+    const startTime = Date.now();
+    try {
+      const result = await this._submitTx(invoice.creator, operation);
+
+      // Parse return value from contract: expected [amountReleased, remaining, newTotalBps]
+      const native = scValToNative(result.returnValue);
+      const amountReleased: bigint = toBigInt(
+        Array.isArray(native) ? native[0] : (native as Record<string, unknown>).amount_released ?? 0n,
+      );
+      const remaining: bigint = toBigInt(
+        Array.isArray(native) ? native[1] : (native as Record<string, unknown>).remaining ?? 0n,
+      );
+      const totalReleasedBps: number =
+        Array.isArray(native)
+          ? Number(native[2] ?? currentTotalBps + bps)
+          : Number((native as Record<string, unknown>).total_released_bps ?? currentTotalBps + bps);
+
+      telemetry.recordMethod("releasePartial", true, Date.now() - startTime);
+      this._cache?.invalidate(invoiceId);
+
+      return {
+        txHash: result.txHash,
+        bps,
+        amountReleased,
+        remaining,
+        totalReleasedBps,
+      };
+    } catch (error) {
+      telemetry.recordMethod("releasePartial", false, Date.now() - startTime);
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue #872 — cancelInvoice: pre-payment guard before cancellation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Cancel an invoice. Guards against cancelling an invoice that has already
+   * received payments — throws {@link CannotCancelFundedInvoiceError} before
+   * any RPC write is attempted when `paidAmount > 0`.
+   *
+   * Emits an `'invoice:cancelled'` event on success.
+   *
+   * @param invoiceId - The invoice to cancel.
+   * @throws {CannotCancelFundedInvoiceError} When the invoice already has payments.
+   * @throws {InvoiceNotPendingError} When the invoice is not in Pending state.
+   */
+  async cancelInvoice(invoiceId: string): Promise<{ txHash: string }> {
+    // Pre-payment guard: fetch current state before any write
+    const invoice = await this._fetchInvoice(invoiceId);
+
+    // Guard: cannot cancel an invoice that has been funded
+    const paidAmount: bigint = invoice.funded ?? 0n;
+    if (paidAmount > 0n) {
+      throw new CannotCancelFundedInvoiceError(invoiceId, paidAmount);
+    }
+
+    const operation = this.contract.call(
+      "cancel_invoice",
+      nativeToScVal(BigInt(invoiceId), { type: "u64" }),
+    );
+
+    const startTime = Date.now();
+    try {
+      const result = await this._submitTx(invoice.creator, operation);
+
+      telemetry.recordMethod("cancelInvoice", true, Date.now() - startTime);
+      this._cache?.invalidate(invoiceId);
+
+      // Emit invoice:cancelled event for subscribers
+      this.emit("invoice:cancelled", { invoiceId });
+
+      return { txHash: result.txHash };
+    } catch (error) {
+      telemetry.recordMethod("cancelInvoice", false, Date.now() - startTime);
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue #871 — bumpInvoiceTtl / getTtl: storage TTL management
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Bump the on-chain storage TTL for an invoice so long-lived invoices are
+   * not evicted before they are released or refunded.
+   *
+   * @param invoiceId - The invoice whose storage entry should be extended.
+   * @throws {InvoiceTerminatedError} When the invoice is in a terminal state
+   *   (Released, Refunded, or Cancelled).
+   */
+  async bumpInvoiceTtl(invoiceId: string): Promise<{ txHash: string }> {
+    const invoice = await this._fetchInvoice(invoiceId);
+
+    const TERMINAL_STATUSES: Array<typeof invoice.status> = [
+      "Released",
+      "Refunded",
+      "Cancelled",
+    ];
+    if (TERMINAL_STATUSES.includes(invoice.status)) {
+      throw new InvoiceTerminatedError(invoiceId, invoice.status);
+    }
+
+    const operation = this.contract.call(
+      "bump_invoice_ttl",
+      nativeToScVal(BigInt(invoiceId), { type: "u64" }),
+    );
+
+    const startTime = Date.now();
+    try {
+      const result = await this._submitTx(invoice.creator, operation);
+      telemetry.recordMethod("bumpInvoiceTtl", true, Date.now() - startTime);
+      return { txHash: result.txHash };
+    } catch (error) {
+      telemetry.recordMethod("bumpInvoiceTtl", false, Date.now() - startTime);
+      throw error;
+    }
+  }
+
+  /**
+   * Query the current storage TTL for an invoice and return a structured
+   * {@link TtlInfo} object with health classification.
+   *
+   * Health thresholds (approximate, based on 5-second ledger close time):
+   * - `'healthy'`  — > 30 days
+   * - `'warning'`  — 7–30 days
+   * - `'critical'` — < 7 days
+   *
+   * @param invoiceId - The invoice to query TTL for.
+   * @returns TtlInfo with ledger count, approximate days, and health status.
+   */
+  async getTtl(invoiceId: string): Promise<TtlInfo> {
+    // Ledgers per second ≈ 1/5 (5-second average close time)
+    const LEDGERS_PER_DAY = Math.round((24 * 60 * 60) / 5); // ~17 280
+
+    const operation = this.contract.call(
+      "get_invoice_ttl",
+      nativeToScVal(BigInt(invoiceId), { type: "u64" }),
+    );
+
+    const startTime = Date.now();
+    try {
+      const raw = await this._simulateView(operation);
+      const ttlLedgers: number = Number(
+        typeof raw === "bigint"
+          ? raw
+          : typeof raw === "number"
+            ? raw
+            : (raw as Record<string, unknown>).ttl_ledgers ?? 0,
+      );
+
+      const approximateDays = ttlLedgers / LEDGERS_PER_DAY;
+
+      let health: TtlInfo["health"];
+      if (approximateDays > 30) {
+        health = "healthy";
+      } else if (approximateDays >= 7) {
+        health = "warning";
+      } else {
+        health = "critical";
+      }
+
+      telemetry.recordMethod("getTtl", true, Date.now() - startTime);
+      return { ttlLedgers, approximateDays, health };
+    } catch (error) {
+      telemetry.recordMethod("getTtl", false, Date.now() - startTime);
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue #870 — getFundingVelocity / computeTrendingScore / isTrending
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch hourly funding velocity buckets for an invoice, suitable for
+   * charting or trend analysis.
+   *
+   * @param invoiceId - The invoice to analyse.
+   * @param options.fromHour - Start hour offset (default: 168 hours ago).
+   * @param options.toHour - End hour offset (default: current hour).
+   * @param options.limit - Maximum number of buckets (default: 168 = 7 days).
+   * @returns Array of VelocityBucket objects ordered oldest-to-newest.
+   */
+  async getFundingVelocity(
+    invoiceId: string,
+    options: { fromHour?: number; toHour?: number; limit?: number } = {},
+  ): Promise<VelocityBucket[]> {
+    const DEFAULT_HOURS = 168; // 7 days
+    const nowMs = Date.now();
+    const msPerHour = 3_600_000;
+    const nowHour = Math.floor(nowMs / msPerHour);
+
+    const toHour = options.toHour ?? nowHour;
+    const fromHour = options.fromHour ?? toHour - DEFAULT_HOURS;
+    const requestedCount = toHour - fromHour;
+    const limit = Math.min(options.limit ?? DEFAULT_HOURS, requestedCount > 0 ? requestedCount : DEFAULT_HOURS);
+
+    const operation = this.contract.call(
+      "get_funding_velocity",
+      nativeToScVal(BigInt(invoiceId), { type: "u64" }),
+      nativeToScVal(fromHour, { type: "u64" }),
+      nativeToScVal(toHour, { type: "u64" }),
+      nativeToScVal(limit, { type: "u32" }),
+    );
+
+    const startTime = Date.now();
+    try {
+      const raw = await this._simulateView(operation);
+
+      // raw may be an array of [hourOffset, amount] tuples or a map/object
+      const entries: VelocityBucket[] = [];
+
+      if (Array.isArray(raw)) {
+        for (let i = 0; i < raw.length; i++) {
+          const item = raw[i] as unknown;
+          let hour: number;
+          let amount: bigint;
+
+          if (Array.isArray(item)) {
+            hour = Number(item[0]);
+            amount = toBigInt(item[1]);
+          } else if (item !== null && typeof item === "object") {
+            const obj = item as Record<string, unknown>;
+            hour = Number(obj.hour ?? obj.hour_offset ?? i);
+            amount = toBigInt(obj.amount ?? obj.funded ?? 0n);
+          } else {
+            hour = fromHour + i;
+            amount = toBigInt(item);
+          }
+
+          const timestamp = new Date((fromHour + (hour - fromHour)) * msPerHour);
+          entries.push({ hour, timestamp, amount });
+        }
+      }
+      // Empty buckets: return empty array (handled gracefully)
+
+      telemetry.recordMethod("getFundingVelocity", true, Date.now() - startTime);
+      return entries;
+    } catch (error) {
+      telemetry.recordMethod("getFundingVelocity", false, Date.now() - startTime);
+      throw error;
+    }
+  }
+
+  /**
+   * Whether a given invoice is currently trending (trending score > 70).
+   *
+   * @param invoiceId - Invoice to check.
+   * @returns `true` if the trending score exceeds 70.
+   */
+  async isTrending(invoiceId: string): Promise<boolean> {
+    const buckets = await this.getFundingVelocity(invoiceId);
+    return computeTrendingScore(buckets) > 70;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Issue #870 — computeTrendingScore: exported standalone pure function
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a 0–100 trending score from a series of hourly funding buckets.
+ *
+ * The algorithm compares the average volume of the most-recent 24 buckets
+ * against the average of the remaining (older) buckets. A score of 100
+ * means recent volume is 2× or more the historic average; 0 means no
+ * recent activity at all.
+ *
+ * @param buckets - Array of VelocityBucket values, oldest-to-newest.
+ * @returns A number in the range [0, 100].
+ */
+export function computeTrendingScore(buckets: VelocityBucket[]): number {
+  if (buckets.length === 0) return 0;
+
+  const RECENT_WINDOW = 24; // last 24 hours
+  const recent = buckets.slice(-RECENT_WINDOW);
+  const historic = buckets.slice(0, Math.max(0, buckets.length - RECENT_WINDOW));
+
+  const sum = (arr: VelocityBucket[]) =>
+    arr.reduce((acc, b) => acc + b.amount, 0n);
+
+  const recentAvg = recent.length > 0 ? sum(recent) / BigInt(recent.length) : 0n;
+  const historicAvg = historic.length > 0 ? sum(historic) / BigInt(historic.length) : 0n;
+
+  if (recentAvg === 0n) return 0;
+  if (historicAvg === 0n) return 100;
+
+  // Score = clamp(recentAvg / historicAvg * 50, 0, 100)
+  // At 2× recent vs historic we hit 100.
+  const ratio = Number(recentAvg * 100n) / Number(historicAvg * 100n);
+  return Math.min(100, Math.round(ratio * 50));
 }
 
 /** Coerce a native-decoded scalar (bigint | number | string) into a bigint, defaulting to 0n. */

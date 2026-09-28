@@ -1427,3 +1427,44 @@ export type {
   SubmitTransactionOptions,
   SubmitServer,
 } from "./transaction/submit.js";
+
+// ---------------------------------------------------------------------------
+// Issue #873 — releasePartial: InvalidBpsError, OverReleaseError, PartialReleaseResult
+// ---------------------------------------------------------------------------
+
+export {
+  InvalidBpsError,
+  isInvalidBpsError,
+  OverReleaseError,
+  isOverReleaseError,
+} from "./errors.js";
+
+export type { PartialReleaseResult } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Issue #872 — cancelInvoice: CannotCancelFundedInvoiceError
+// ---------------------------------------------------------------------------
+
+export {
+  CannotCancelFundedInvoiceError,
+  isCannotCancelFundedInvoiceError,
+} from "./errors.js";
+
+// ---------------------------------------------------------------------------
+// Issue #871 — bumpInvoiceTtl / getTtl: InvoiceTerminatedError, TtlInfo
+// ---------------------------------------------------------------------------
+
+export {
+  InvoiceTerminatedError,
+  isInvoiceTerminatedError,
+} from "./errors.js";
+
+export type { TtlInfo, TtlHealth } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Issue #870 — getFundingVelocity: VelocityBucket, computeTrendingScore
+// ---------------------------------------------------------------------------
+
+export type { VelocityBucket } from "./types.js";
+
+export { computeTrendingScore } from "./client.js";

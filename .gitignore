@@ -64,3 +64,21 @@ task2.md
 task3.md
 task4.md
 somzilla.md
+
+# Test output artefacts
+*.test-results.json
+*.junit.xml
+vitest-report.json
+test-report.json
+
+# Heap dumps and profiler output
+*.heapsnapshot
+*.cpuprofile
+
+# Yarn / pnpm lock caches
+.yarn/cache/
+.pnpm-store/
+
+# Local developer overrides
+*.local.ts
+*.local.js

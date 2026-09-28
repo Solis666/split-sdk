@@ -2150,3 +2150,64 @@ export interface ClaimableBalanceRecord {
   /** Ledger sequence after which the predicate expires (optional). */
   predicateExpiryLedger?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Issue #873 — releasePartial result type
+// ---------------------------------------------------------------------------
+
+/**
+ * Result returned by {@link StellarSplitClient.releasePartial}.
+ */
+export interface PartialReleaseResult {
+  /** Transaction hash of the release_partial contract call. */
+  txHash: string;
+  /** Basis points released in this call (1–10 000). */
+  bps: number;
+  /** Amount of tokens (in stroops) disbursed in this release. */
+  amountReleased: bigint;
+  /** Amount of tokens (in stroops) still held in the invoice after this release. */
+  remaining: bigint;
+  /** Running total of basis points released across all partial releases. */
+  totalReleasedBps: number;
+}
+
+// ---------------------------------------------------------------------------
+// Issue #871 — TTL info type
+// ---------------------------------------------------------------------------
+
+/**
+ * Storage TTL health status for an invoice.
+ * - `'healthy'`  — more than 30 days remaining.
+ * - `'warning'`  — between 7 and 30 days remaining.
+ * - `'critical'` — fewer than 7 days remaining.
+ */
+export type TtlHealth = "healthy" | "warning" | "critical";
+
+/**
+ * TTL information returned by {@link StellarSplitClient.getTtl}.
+ */
+export interface TtlInfo {
+  /** Remaining ledgers until the invoice's storage entry expires. */
+  ttlLedgers: number;
+  /** Approximate number of days remaining (based on 5-second ledger close time). */
+  approximateDays: number;
+  /** Health classification derived from the approximate days remaining. */
+  health: TtlHealth;
+}
+
+// ---------------------------------------------------------------------------
+// Issue #870 — Funding velocity types
+// ---------------------------------------------------------------------------
+
+/**
+ * A single hourly funding bucket returned by
+ * {@link StellarSplitClient.getFundingVelocity}.
+ */
+export interface VelocityBucket {
+  /** Hour offset (0 = oldest bucket in the requested range). */
+  hour: number;
+  /** Wall-clock timestamp for this bucket's start. */
+  timestamp: Date;
+  /** Total amount funded (in stroops) during this hour. */
+  amount: bigint;
+}

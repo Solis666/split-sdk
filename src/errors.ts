@@ -2251,3 +2251,115 @@ export function isWalletConnectionTimeoutError(err: unknown): err is WalletConne
   return err instanceof WalletConnectionTimeoutError;
 }
 
+
+// ---------------------------------------------------------------------------
+// Issue #873 — releasePartial basis-point validation errors
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a basis-points value passed to releasePartial is outside the
+ * valid range of 1–10 000.
+ */
+export class InvalidBpsError extends StellarSplitError {
+  readonly bps: number;
+
+  constructor(bps: number) {
+    super(
+      `Invalid basis-points value: ${bps}. Must be between 1 and 10000 (inclusive).`,
+      "INVALID_BPS",
+      { bps },
+    );
+    this.name = "InvalidBpsError";
+    this.bps = bps;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isInvalidBpsError(err: unknown): err is InvalidBpsError {
+  return err instanceof InvalidBpsError;
+}
+
+/**
+ * Thrown when the requested partial release would push totalReleasedBps beyond
+ * 10 000 (100%).
+ */
+export class OverReleaseError extends StellarSplitError {
+  readonly invoiceId: string;
+  readonly currentTotalBps: number;
+  readonly requestedBps: number;
+
+  constructor(invoiceId: string, currentTotalBps: number, requestedBps: number) {
+    super(
+      `Release of ${requestedBps} bps would exceed 100% (currently at ${currentTotalBps} bps) for invoice ${invoiceId}.`,
+      "OVER_RELEASE",
+      { invoiceId, currentTotalBps, requestedBps },
+    );
+    this.name = "OverReleaseError";
+    this.invoiceId = invoiceId;
+    this.currentTotalBps = currentTotalBps;
+    this.requestedBps = requestedBps;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isOverReleaseError(err: unknown): err is OverReleaseError {
+  return err instanceof OverReleaseError;
+}
+
+// ---------------------------------------------------------------------------
+// Issue #872 — cancelInvoice pre-payment guard error
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when cancelInvoice is called on an invoice that has already received
+ * at least one payment (paidAmount > 0).
+ */
+export class CannotCancelFundedInvoiceError extends StellarSplitError {
+  readonly invoiceId: string;
+  readonly paidAmount: bigint;
+
+  constructor(invoiceId: string, paidAmount: bigint) {
+    super(
+      `Cannot cancel invoice ${invoiceId}: it has already received ${paidAmount} stroops in payments.`,
+      "CANNOT_CANCEL_FUNDED_INVOICE",
+      { invoiceId, paidAmount: paidAmount.toString() },
+    );
+    this.name = "CannotCancelFundedInvoiceError";
+    this.invoiceId = invoiceId;
+    this.paidAmount = paidAmount;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isCannotCancelFundedInvoiceError(err: unknown): err is CannotCancelFundedInvoiceError {
+  return err instanceof CannotCancelFundedInvoiceError;
+}
+
+// ---------------------------------------------------------------------------
+// Issue #871 — TTL management errors
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when bumpInvoiceTtl is called on an invoice that is in a terminal
+ * state (Released, Refunded, or Cancelled).
+ */
+export class InvoiceTerminatedError extends StellarSplitError {
+  readonly invoiceId: string;
+  readonly status: string;
+
+  constructor(invoiceId: string, status: string) {
+    super(
+      `Cannot bump TTL for invoice ${invoiceId}: it is in terminal state "${status}".`,
+      "INVOICE_TERMINATED",
+      { invoiceId, status },
+    );
+    this.name = "InvoiceTerminatedError";
+    this.invoiceId = invoiceId;
+    this.status = status;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isInvoiceTerminatedError(err: unknown): err is InvoiceTerminatedError {
+  return err instanceof InvoiceTerminatedError;
+}
