@@ -326,6 +326,15 @@ export interface Invoice {
   groupId?: string;
   /** Ledger sequence when this invoice was last modified. */
   lastModifiedLedger?: number;
+  /**
+   * Optional free-form labels used for tag-based querying via
+   * `client.queryInvoices({ tags: [...] })`.
+   *
+   * When omitted, the query engine falls back to parsing `#hashtags` out of
+   * `memo`, so invoices created with a tagged memo are queryable without any
+   * contract change.
+   */
+  tags?: string[];
   /** IDs of invoices that must be paid before this one. */
   prerequisites?: string[];
   /** ID of the parent invoice this was cloned from (clone chain). */
@@ -487,6 +496,12 @@ export interface CreateInvoiceParams {
   /** Optional memo / description. */
   memo?: string;
   /**
+   * When `true`, simulate the transaction against Soroban RPC instead of
+   * submitting it, and resolve with a {@link SimulationResult} (issue #844).
+   * @default false
+   */
+  simulate?: boolean;
+  /**
    * When `true`, skip the `RecipientBalancePreCheck` that normally runs
    * before the invoice is submitted. Use only for advanced flows where you
    * have already validated recipients independently.
@@ -535,6 +550,12 @@ export interface PayParams {
    * fails to reach its goal. Defaults to false.
    */
   donateOnFailure?: boolean;
+  /**
+   * When `true`, simulate the payment against Soroban RPC instead of
+   * submitting it, and resolve with a {@link SimulationResult} (issue #844).
+   * @default false
+   */
+  simulate?: boolean;
 }
 
 /** @deprecated Use PayParams instead. */
@@ -787,7 +808,48 @@ export interface CloneOverrides {
    * recipient account lookups.
    */
   horizonUrl?: string;
+  /**
+   * Optional new title/memo stored on the cloned invoice.
+   * Serialised as the `new_title` entry of the clone override map (issue #850).
+   */
+  newTitle?: string;
 }
+
+/**
+ * Field-level overrides accepted by {@link StellarSplitClient.cloneInvoice}
+ * (issue #850). These are mapped onto the contract's `clone_invoice` override
+ * map after validation, mirroring the checks applied by `createInvoice`.
+ */
+export interface InvoiceParamOverrides {
+  /** Optional new title/memo for the cloned invoice (non-empty string). */
+  title?: string;
+  /** Optional new deadline as a future unix timestamp in seconds. */
+  deadline?: number;
+  /** Optional new total target amount in stroops (positive bigint). */
+  targetAmount?: bigint;
+  /** Optional replacement recipient addresses (must be valid Stellar addresses). */
+  recipients?: string[];
+}
+
+/**
+ * Options accepted by mutating methods to request a dry-run simulation
+ * against Soroban RPC instead of submitting a transaction (issue #844).
+ */
+export interface SimulateMutationOptions {
+  /**
+   * When `true`, the transaction is simulated and never submitted, and the
+   * method resolves with a {@link SimulationResult}.
+   * @default false
+   */
+  simulate?: boolean;
+}
+
+/**
+ * Result of a mutating client method that supports `{ simulate: true }`.
+ * Resolves with the real submission result, or a {@link SimulationResult}
+ * when simulation was requested.
+ */
+export type MaybeSimulated<T> = T | SimulationResult;
 
 /** Field names supported by read methods that can return partial objects. */
 export type InvoiceField = keyof Invoice;
@@ -2152,62 +2214,65 @@ export interface ClaimableBalanceRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Issue #873 — releasePartial result type
+// Invoice Rating Types (Issue #865)
 // ---------------------------------------------------------------------------
 
-/**
- * Result returned by {@link StellarSplitClient.releasePartial}.
- */
-export interface PartialReleaseResult {
-  /** Transaction hash of the release_partial contract call. */
-  txHash: string;
-  /** Basis points released in this call (1–10 000). */
-  bps: number;
-  /** Amount of tokens (in stroops) disbursed in this release. */
-  amountReleased: bigint;
-  /** Amount of tokens (in stroops) still held in the invoice after this release. */
-  remaining: bigint;
-  /** Running total of basis points released across all partial releases. */
-  totalReleasedBps: number;
+/** Creator rating information. */
+export interface CreatorRating {
+  /** Total number of ratings received by the creator. */
+  totalRatings: bigint;
+  /** Average star rating as a float (e.g. 4.3). */
+  averageStars: number;
 }
 
 // ---------------------------------------------------------------------------
-// Issue #871 — TTL info type
+// Deadline Extension Types (Issue #864)
 // ---------------------------------------------------------------------------
 
-/**
- * Storage TTL health status for an invoice.
- * - `'healthy'`  — more than 30 days remaining.
- * - `'warning'`  — between 7 and 30 days remaining.
- * - `'critical'` — fewer than 7 days remaining.
- */
-export type TtlHealth = "healthy" | "warning" | "critical";
-
-/**
- * TTL information returned by {@link StellarSplitClient.getTtl}.
- */
-export interface TtlInfo {
-  /** Remaining ledgers until the invoice's storage entry expires. */
-  ttlLedgers: number;
-  /** Approximate number of days remaining (based on 5-second ledger close time). */
-  approximateDays: number;
-  /** Health classification derived from the approximate days remaining. */
-  health: TtlHealth;
+/** Extension status for an invoice deadline. */
+export interface ExtensionStatus {
+  /** Current number of votes for extension. */
+  voteCount: bigint;
+  /** Minimum number of votes required (quorum). */
+  quorumRequired: bigint;
+  /** Number of times the deadline has been extended. */
+  extensionCount: bigint;
+  /** Maximum allowed extensions. */
+  maxExtensions: bigint;
+  /** Current deadline timestamp. */
+  currentDeadline: bigint;
 }
 
 // ---------------------------------------------------------------------------
-// Issue #870 — Funding velocity types
+// Group Management Types (Issue #863)
 // ---------------------------------------------------------------------------
 
-/**
- * A single hourly funding bucket returned by
- * {@link StellarSplitClient.getFundingVelocity}.
- */
-export interface VelocityBucket {
-  /** Hour offset (0 = oldest bucket in the requested range). */
-  hour: number;
-  /** Wall-clock timestamp for this bucket's start. */
-  timestamp: Date;
-  /** Total amount funded (in stroops) during this hour. */
-  amount: bigint;
+/** Statistics for an invoice group. */
+export interface GroupStats {
+  /** Group name. */
+  name: string;
+  /** Total target amount for all invoices in the group. */
+  totalTarget: bigint;
+  /** Total funded amount for all invoices in the group. */
+  totalFunded: bigint;
+  /** Number of invoices in the group. */
+  invoiceCount: bigint;
+  /** Number of fully funded invoices in the group. */
+  fullyFundedCount: bigint;
+}
+
+// ---------------------------------------------------------------------------
+// Attestation Types (Issue #862)
+// ---------------------------------------------------------------------------
+
+/** Invoice attestation record. */
+export interface Attestation {
+  /** Address of the attester. */
+  attester: string;
+  /** Attestation statement (max 256 chars). */
+  statement: string;
+  /** Unix timestamp when the attestation was created. */
+  timestamp: bigint;
+  /** Whether the attestation has been revoked. */
+  revoked: boolean;
 }

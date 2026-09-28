@@ -1578,6 +1578,38 @@ export class PassphraseMismatchError extends StellarSplitError {
   }
 }
 
+/**
+ * Thrown when the passphrase of the requested network preset does not match the
+ * passphrase reported by the live Soroban RPC endpoint, so the switch is
+ * rejected and the client stays on its current network.
+ *
+ * Carries both sides of the comparison so callers can surface them without
+ * parsing the message: `expected` is the preset passphrase and `actual` is what
+ * the RPC node reported.
+ */
+export class NetworkMismatchError extends StellarSplitError {
+  /** The passphrase configured by the requested network preset. */
+  readonly expected: string;
+  /** The passphrase reported by the live RPC endpoint. */
+  readonly actual: string;
+
+  constructor(expected: string, actual: string) {
+    super(
+      `Network passphrase mismatch: expected [${expected}] but the RPC node reported [${actual}].`,
+      "NETWORK_MISMATCH",
+      { expected, actual }
+    );
+    this.name = "NetworkMismatchError";
+    this.expected = expected;
+    this.actual = actual;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isNetworkMismatchError(err: unknown): err is NetworkMismatchError {
+  return err instanceof NetworkMismatchError;
+}
+
 // ---------------------------------------------------------------------------
 // Sequence cache errors
 // ---------------------------------------------------------------------------
@@ -2109,6 +2141,53 @@ export class StellarTomlFetchError extends StellarSplitError {
   }
 }
 
+/**
+ * Thrown when a TLS certificate fingerprint for an anchor HTTPS endpoint does
+ * not match the configured pinned fingerprint (#780).
+ *
+ * The fingerprint should be a colon-separated uppercase hex string in the
+ * standard `openssl` format, e.g. `"AA:BB:CC:..."`.
+ */
+export class CertificatePinningError extends StellarSplitError {
+  readonly domain: string;
+  readonly expectedFingerprint: string;
+  readonly actualFingerprint: string;
+
+  constructor(domain: string, expectedFingerprint: string, actualFingerprint: string) {
+    super(
+      `Certificate fingerprint mismatch for domain "${domain}": ` +
+        `expected "${expectedFingerprint}", got "${actualFingerprint}"`,
+      "CERTIFICATE_PINNING_ERROR",
+      { domain, expectedFingerprint, actualFingerprint },
+    );
+    this.name = "CertificatePinningError";
+    this.domain = domain;
+    this.expectedFingerprint = expectedFingerprint;
+    this.actualFingerprint = actualFingerprint;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * Thrown when a `stellar.toml` file carries a VERSION that is not listed in
+ * {@link SUPPORTED_TOML_VERSIONS} (#779).
+ */
+export class UnsupportedTomlVersionError extends StellarSplitError {
+  readonly encounteredVersion: string;
+
+  constructor(encounteredVersion: string) {
+    super(
+      `Unsupported stellar.toml VERSION "${encounteredVersion}". ` +
+        `Supported versions: ${JSON.stringify([2.0, 2.1])}`,
+      "UNSUPPORTED_TOML_VERSION",
+      { encounteredVersion },
+    );
+    this.name = "UnsupportedTomlVersionError";
+    this.encounteredVersion = encounteredVersion;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 /** Thrown when all channel accounts in the pool are busy and the acquire timeout elapses. */
 export class ChannelExhaustedError extends StellarSplitError {
   readonly poolSize: number;
@@ -2251,115 +2330,29 @@ export function isWalletConnectionTimeoutError(err: unknown): err is WalletConne
   return err instanceof WalletConnectionTimeoutError;
 }
 
-
 // ---------------------------------------------------------------------------
-// Issue #873 — releasePartial basis-point validation errors
+// Batch operations errors
 // ---------------------------------------------------------------------------
 
-/**
- * Thrown when a basis-points value passed to releasePartial is outside the
- * valid range of 1–10 000.
- */
-export class InvalidBpsError extends StellarSplitError {
-  readonly bps: number;
+/** Thrown when a batch operation exceeds the maximum allowed size. */
+export class BatchTooLargeError extends StellarSplitError {
+  readonly batchSize: number;
+  readonly maxSize: number;
 
-  constructor(bps: number) {
+  constructor(batchSize: number, maxSize: number = 20) {
     super(
-      `Invalid basis-points value: ${bps}. Must be between 1 and 10000 (inclusive).`,
-      "INVALID_BPS",
-      { bps },
+      `Batch size ${batchSize} exceeds maximum of ${maxSize}`,
+      "BATCH_TOO_LARGE",
+      { batchSize, maxSize },
     );
-    this.name = "InvalidBpsError";
-    this.bps = bps;
+    this.name = "BatchTooLargeError";
+    this.batchSize = batchSize;
+    this.maxSize = maxSize;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
-export function isInvalidBpsError(err: unknown): err is InvalidBpsError {
-  return err instanceof InvalidBpsError;
+export function isBatchTooLargeError(err: unknown): err is BatchTooLargeError {
+  return err instanceof BatchTooLargeError;
 }
 
-/**
- * Thrown when the requested partial release would push totalReleasedBps beyond
- * 10 000 (100%).
- */
-export class OverReleaseError extends StellarSplitError {
-  readonly invoiceId: string;
-  readonly currentTotalBps: number;
-  readonly requestedBps: number;
-
-  constructor(invoiceId: string, currentTotalBps: number, requestedBps: number) {
-    super(
-      `Release of ${requestedBps} bps would exceed 100% (currently at ${currentTotalBps} bps) for invoice ${invoiceId}.`,
-      "OVER_RELEASE",
-      { invoiceId, currentTotalBps, requestedBps },
-    );
-    this.name = "OverReleaseError";
-    this.invoiceId = invoiceId;
-    this.currentTotalBps = currentTotalBps;
-    this.requestedBps = requestedBps;
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
-
-export function isOverReleaseError(err: unknown): err is OverReleaseError {
-  return err instanceof OverReleaseError;
-}
-
-// ---------------------------------------------------------------------------
-// Issue #872 — cancelInvoice pre-payment guard error
-// ---------------------------------------------------------------------------
-
-/**
- * Thrown when cancelInvoice is called on an invoice that has already received
- * at least one payment (paidAmount > 0).
- */
-export class CannotCancelFundedInvoiceError extends StellarSplitError {
-  readonly invoiceId: string;
-  readonly paidAmount: bigint;
-
-  constructor(invoiceId: string, paidAmount: bigint) {
-    super(
-      `Cannot cancel invoice ${invoiceId}: it has already received ${paidAmount} stroops in payments.`,
-      "CANNOT_CANCEL_FUNDED_INVOICE",
-      { invoiceId, paidAmount: paidAmount.toString() },
-    );
-    this.name = "CannotCancelFundedInvoiceError";
-    this.invoiceId = invoiceId;
-    this.paidAmount = paidAmount;
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
-
-export function isCannotCancelFundedInvoiceError(err: unknown): err is CannotCancelFundedInvoiceError {
-  return err instanceof CannotCancelFundedInvoiceError;
-}
-
-// ---------------------------------------------------------------------------
-// Issue #871 — TTL management errors
-// ---------------------------------------------------------------------------
-
-/**
- * Thrown when bumpInvoiceTtl is called on an invoice that is in a terminal
- * state (Released, Refunded, or Cancelled).
- */
-export class InvoiceTerminatedError extends StellarSplitError {
-  readonly invoiceId: string;
-  readonly status: string;
-
-  constructor(invoiceId: string, status: string) {
-    super(
-      `Cannot bump TTL for invoice ${invoiceId}: it is in terminal state "${status}".`,
-      "INVOICE_TERMINATED",
-      { invoiceId, status },
-    );
-    this.name = "InvoiceTerminatedError";
-    this.invoiceId = invoiceId;
-    this.status = status;
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
-
-export function isInvoiceTerminatedError(err: unknown): err is InvoiceTerminatedError {
-  return err instanceof InvoiceTerminatedError;
-}
