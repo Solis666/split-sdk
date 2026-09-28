@@ -20,7 +20,7 @@ import type { ProtocolStats, Note, SdkLogger } from "../src/types.js";
 // ---------------------------------------------------------------------------
 
 /** Valid Stellar G-address used as a stand-in for contract/account IDs. */
-const VALID_ADDRESS_1 = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const VALID_ADDRESS_1 = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWNN";
 const VALID_ADDRESS_2 = "GBVVJJWVYW5SXMKPQLZ7GWMIFKIWUUDEHB3FKPMZKMFPCKQHCLBGTBNF";
 const VALID_ADDRESS_3 = "GD5DJQDDBKGAYNEAXU562HYGOOSYAEOO6AS53PZXBOZGCP5M2OPGMZV3";
 const INVALID_ADDRESS = "not-a-valid-address";
@@ -358,11 +358,11 @@ describe("#876 — Protocol Stats", () => {
     const sub = client.subscribeProtocolStats((s) => received.push(s));
 
     // First poll runs immediately (synchronous via void poll())
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(0);
     expect(received).toHaveLength(1); // fired once on first fetch
 
     // Second poll — same data (cache hit), should NOT fire
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(30000);
     expect(received).toHaveLength(1); // no change, no callback
 
     // Expire cache and change the data
@@ -376,7 +376,7 @@ describe("#876 — Protocol Stats", () => {
       uniquePayers: 20,
     });
 
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(30000);
     expect(received).toHaveLength(2); // new value → callback fired
 
     sub.unsubscribe();
