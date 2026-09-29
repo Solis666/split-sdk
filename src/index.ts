@@ -1656,3 +1656,24 @@ export {
   TooEarlyToTriggerError,
 } from "./subscriptions.js";
 export type { Subscription, SubscriptionStatus, CreateSubscriptionParams } from "./types/subscriptions.js";
+
+// Invoice recommendation AI (#980)
+export { InvoiceRecommendationEngine } from "./invoiceRecommendation.js";
+export type {
+  RecommendationSignal,
+  RecommendationContext,
+  InvoiceRecommendation,
+  RecommendationEngineOptions,
+  RecommendationEventMap,
+} from "./invoiceRecommendation.js";
+
+// Invoice retirement and archival management (#981)
+export { InvoiceRetirementManager, RETIRABLE_STATUSES } from "./invoiceRetirement.js";
+export type {
+  ArchivedInvoiceRecord,
+  RetirementReason,
+  RetireOptions,
+  BulkRetirementResult,
+  RetirementManagerOptions,
+  RetirementEventMap,
+} from "./invoiceRetirement.js";
