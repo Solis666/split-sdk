@@ -1344,6 +1344,19 @@ export type {
 // Waterfall payment routing
 // ---------------------------------------------------------------------------
 
+export { FraudDetectionIntegration } from "./fraudDetection.js";
+export type {
+  FraudAssessment,
+  FraudCheckKind,
+  FraudDetectionEvents,
+  FraudDetectionOptions,
+  FraudPayment,
+  FraudRule,
+  FraudRuleContext,
+  FraudSeverity,
+  FraudSignal,
+} from "./fraudDetection.js";
+
 export { WaterfallRouter } from "./routing/WaterfallRouter.js";
 export type { WaterfallConfig, WaterfallTier, WaterfallPlan, WaterfallStep } from "./types/routing.js";
 
