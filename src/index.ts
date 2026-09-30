@@ -1372,6 +1372,17 @@ export type {
 
 export { WaterfallRouter } from "./routing/WaterfallRouter.js";
 export type { WaterfallConfig, WaterfallTier, WaterfallPlan, WaterfallStep } from "./types/routing.js";
+export { PaymentRouteOptimizer } from "./paymentRouteOptimizer.js";
+export type {
+  PaymentRouteCandidate,
+  PaymentRouteConstraints,
+  PaymentRouteOptimization,
+  PaymentRouteOptimizerEvents,
+  PaymentRouteOptimizerOptions,
+  PaymentRouteWeights,
+  RejectedPaymentRoute,
+  ScoredPaymentRoute,
+} from "./paymentRouteOptimizer.js";
 
 // ---------------------------------------------------------------------------
 // Optimistic UI cache
