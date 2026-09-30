@@ -11,6 +11,8 @@
  *   npm run test:smoke
  *
  * Uses MockStellarSplitClient — no RPC endpoint or deployed contract required.
+ *
+ * Closes #890
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
