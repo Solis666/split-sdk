@@ -55,6 +55,7 @@
     "test": "vitest run test/client.test.ts test/retryPolicy.test.ts test/network-environment.test.ts",
     "test:ui": "vitest run test/ui/",
     "test:integration": "vitest run tests/integration",
+    "test:smoke": "vitest run tests/smoke.test.ts",
     "test:all": "vitest run",
     "test:e2e": "vitest run test/e2e",
     "test:watch": "vitest",
