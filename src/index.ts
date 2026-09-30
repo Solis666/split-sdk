@@ -1121,6 +1121,19 @@ export type {
   ReputationConfig,
 } from "./reputation.js";
 
+export { RiskAssessmentEngine } from "./riskAssessment.js";
+export type {
+  RiskAssessmentEventMap,
+  RiskAssessmentOptions,
+  RiskAssessmentResult,
+  RiskFactor,
+  RiskLevel,
+  RiskRule,
+  RiskRuleContext,
+  RiskRuleResult,
+  RiskSubject,
+} from "./riskAssessment.js";
+
 export { computePaymentForecast } from "./forecast.js";
 export type {
   PaymentForecast,
