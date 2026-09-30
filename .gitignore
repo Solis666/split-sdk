@@ -15,15 +15,13 @@ scripts/bundle-size-report.json
 
 # Coverage & test artefacts
 coverage/
-.vitest/
 .nyc_output/
 test-results/
-.env
-.env.local
-*.env.*
 
-# Vitest cache
+# Vitest / Jest cache
+.vitest/
 .vitest-cache/
+.jest-cache/
 
 # Profiler / speedscope output
 *.profile.json
@@ -33,27 +31,6 @@ test-results/
 .DS_Store
 Thumbs.db
 
-# Task / scratch files
-*.log
-task1.md
-task2.md
-task3.md
-task4.md
-somzilla.md
-
-# Test snapshots & temporary output
-**/__snapshots__/
-*.snap
-*.snapshot
-*.snapshot.json
-testsnapshot/
-testSnapshot/
-test-snapshot/
-test-snapshots/
-/tmp/
-*.profile.json
-*.speedscope.json
-
 # IDE / editor
 .vscode/
 .idea/
@@ -62,19 +39,10 @@ test-snapshots/
 *~
 
 # Logs
+*.log
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-
-# Temp files
-*.tmp
-*.temp
-
-# Size-limit cache
-.size-limit/
-
-# Vitest UI
-__vitest_browser__/
 
 # Temp / scratch files
 /tmp/
@@ -99,9 +67,11 @@ test-snapshot/
 test-snapshots/
 snapshots/
 
-# Vitest / Jest cache
-.vitest-cache/
-.jest-cache/
+# Size-limit cache
+.size-limit/
+
+# Vitest UI
+__vitest_browser__/
 
 # Lock files (keep package-lock.json but ignore others)
 yarn.lock
