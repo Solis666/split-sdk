@@ -9,6 +9,7 @@
 
 import React, { useState, useCallback } from 'react';
 import type { Invoice, DisputeStatus } from '../types.js';
+import { useWhiteLabel } from './WhiteLabelProvider.js';
 
 export interface DisputePanelProps {
   /** The invoice with dispute information */
@@ -50,6 +51,7 @@ export const DisputePanel: React.FC<DisputePanelProps> = ({
   userAddress,
   loading = false,
 }) => {
+  const { labels } = useWhiteLabel();
   const [uploadingEvidence, setUploadingEvidence] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [votingAction, setVotingAction] = useState<'approve' | 'reject' | null>(null);
@@ -158,10 +160,10 @@ export const DisputePanel: React.FC<DisputePanelProps> = ({
       {/* Header */}
       <div className="dispute-panel__header">
         <h2 className="dispute-panel__title">
-          ⚠️ Dispute in Progress
+          ⚠️ {labels.disputeInProgress ?? 'Dispute in Progress'}
         </h2>
         <span className={`dispute-panel__status ${isDisputeActive ? 'active' : 'resolved'}`}>
-          {isDisputeActive ? 'Active' : 'Resolved'}
+          {isDisputeActive ? labels.active ?? 'Active' : labels.resolved ?? 'Resolved'}
         </span>
       </div>
 
@@ -169,19 +171,19 @@ export const DisputePanel: React.FC<DisputePanelProps> = ({
       <div className="dispute-panel__info">
         <div className="dispute-panel__info-grid">
           <div className="dispute-panel__info-item">
-            <span className="dispute-panel__label">Dispute Reason:</span>
+            <span className="dispute-panel__label">{labels.disputeReason ?? 'Dispute Reason'}:</span>
             <span className="dispute-panel__value">{disputeStatus.reason || 'Not specified'}</span>
           </div>
 
           <div className="dispute-panel__info-item">
-            <span className="dispute-panel__label">Opened By:</span>
+            <span className="dispute-panel__label">{labels.openedBy ?? 'Opened By'}:</span>
             <span className="dispute-panel__value dispute-panel__address">
               {disputeStatus.openedBy || 'Unknown'}
             </span>
           </div>
 
           <div className="dispute-panel__info-item">
-            <span className="dispute-panel__label">Time Opened:</span>
+            <span className="dispute-panel__label">{labels.timeOpened ?? 'Time Opened'}:</span>
             <span className="dispute-panel__value">
               {disputeStatus.openedAt ? formatDate(disputeStatus.openedAt) : 'Unknown'}
               {disputeStatus.openedAt && (
@@ -191,11 +193,11 @@ export const DisputePanel: React.FC<DisputePanelProps> = ({
           </div>
 
           <div className="dispute-panel__info-item">
-            <span className="dispute-panel__label">Arbitrator:</span>
+            <span className="dispute-panel__label">{labels.arbitrator ?? 'Arbitrator'}:</span>
             <span className="dispute-panel__value dispute-panel__address">
               {disputeStatus.arbiter}
               {isArbitrator && (
-                <span className="dispute-panel__badge">You</span>
+                <span className="dispute-panel__badge">{labels.you ?? 'You'}</span>
               )}
             </span>
           </div>
@@ -205,7 +207,7 @@ export const DisputePanel: React.FC<DisputePanelProps> = ({
       {/* Vote Tally */}
       {disputeStatus.resolved && (
         <div className="dispute-panel__vote-tally">
-          <h3 className="dispute-panel__section-title">Final Decision</h3>
+          <h3 className="dispute-panel__section-title">{labels.finalDecision ?? 'Final Decision'}</h3>
           <div className={`dispute-panel__result ${disputeStatus.resolution}`}>
             <div className="dispute-panel__result-icon">
               {disputeStatus.resolution === 'approved' ? '✓' : '✗'}
@@ -253,7 +255,7 @@ export const DisputePanel: React.FC<DisputePanelProps> = ({
               className="dispute-panel__button dispute-panel__button--upload"
               data-testid="upload-evidence-button"
             >
-              {uploadingEvidence ? 'Uploading...' : 'Submit Evidence'}
+              {uploadingEvidence ? 'Uploading...' : labels.submitEvidence ?? 'Submit Evidence'}
             </button>
           </div>
         </div>

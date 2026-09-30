@@ -7,6 +7,7 @@
  */
 
 import React from 'react';
+import { useWhiteLabel } from './WhiteLabelProvider.js';
 
 export type DisputeEventType =
   | 'dispute_opened'
@@ -62,6 +63,7 @@ export const DisputeTimeline: React.FC<DisputeTimelineProps> = ({
   loading = false,
   className = '',
 }) => {
+  const { labels } = useWhiteLabel();
   // Sort events by timestamp (newest first)
   const sortedEvents = [...events].sort((a, b) => b.timestamp - a.timestamp);
 
@@ -146,7 +148,7 @@ export const DisputeTimeline: React.FC<DisputeTimelineProps> = ({
       <div className={`dispute-timeline ${className}`} data-testid="dispute-timeline-loading">
         <div className="dispute-timeline__loading">
           <div className="dispute-timeline__spinner" />
-          <p>Loading timeline...</p>
+          <p>{labels.loadingTimeline ?? 'Loading timeline...'}</p>
         </div>
       </div>
     );
@@ -156,7 +158,7 @@ export const DisputeTimeline: React.FC<DisputeTimelineProps> = ({
     return (
       <div className={`dispute-timeline ${className}`} data-testid="dispute-timeline-empty">
         <div className="dispute-timeline__empty">
-          <p>No events yet</p>
+          <p>{labels.noEvents ?? 'No events yet'}</p>
         </div>
       </div>
     );
@@ -164,7 +166,7 @@ export const DisputeTimeline: React.FC<DisputeTimelineProps> = ({
 
   return (
     <div className={`dispute-timeline ${className}`} data-testid="dispute-timeline">
-      <h3 className="dispute-timeline__title">Dispute Timeline</h3>
+      <h3 className="dispute-timeline__title">{labels.disputeTimeline ?? 'Dispute Timeline'}</h3>
       
       <div className="dispute-timeline__events">
         {sortedEvents.map((event, index) => (

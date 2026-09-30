@@ -10,6 +10,7 @@ import React, { useCallback, useState, useMemo } from 'react';
 import { DisputePanel } from './DisputePanel.js';
 import { DisputeTimeline, type DisputeTimelineEvent } from './DisputeTimeline.js';
 import { useInvoiceStream } from './hooks/useInvoiceStream.js';
+import { useWhiteLabel } from './WhiteLabelProvider.js';
 import type { StellarSplitClient } from '../client.js';
 import type { Invoice } from '../types.js';
 
@@ -44,6 +45,7 @@ export const InvoiceDetailPage: React.FC<InvoiceDetailPageProps> = ({
   uploadToIPFS,
   className = '',
 }) => {
+  const { brandName, labels } = useWhiteLabel();
   const [timelineEvents, setTimelineEvents] = useState<DisputeTimelineEvent[]>([]);
 
   // Real-time invoice updates
@@ -174,10 +176,10 @@ export const InvoiceDetailPage: React.FC<InvoiceDetailPageProps> = ({
     return (
       <div className={`invoice-detail-page ${className}`} data-testid="invoice-detail-error">
         <div className="invoice-detail-page__error">
-          <h2>Error Loading Invoice</h2>
+          <h2>{labels.errorLoadingInvoice ?? 'Error Loading Invoice'}</h2>
           <p>{error.message}</p>
           <button onClick={refresh} className="invoice-detail-page__retry-button">
-            Retry
+            {labels.retry ?? 'Retry'}
           </button>
         </div>
       </div>
@@ -189,7 +191,7 @@ export const InvoiceDetailPage: React.FC<InvoiceDetailPageProps> = ({
     return (
       <div className={`invoice-detail-page ${className}`} data-testid="invoice-detail-not-found">
         <div className="invoice-detail-page__not-found">
-          <h2>Invoice Not Found</h2>
+          <h2>{labels.invoiceNotFound ?? 'Invoice Not Found'}</h2>
           <p>Invoice #{invoiceId} does not exist or could not be loaded.</p>
         </div>
       </div>
@@ -197,7 +199,7 @@ export const InvoiceDetailPage: React.FC<InvoiceDetailPageProps> = ({
   }
 
   return (
-    <div className={`invoice-detail-page ${className}`} data-testid="invoice-detail-page">
+    <div className={`invoice-detail-page ${className}`} data-testid="invoice-detail-page" data-brand={brandName}>
       {/* Connection status indicator */}
       <div className={`invoice-detail-page__status ${isConnected ? 'connected' : 'disconnected'}`}>
         <span className="invoice-detail-page__status-dot" />
@@ -207,7 +209,7 @@ export const InvoiceDetailPage: React.FC<InvoiceDetailPageProps> = ({
       {/* Invoice Header */}
       <div className="invoice-detail-page__header">
         <h1 className="invoice-detail-page__title">
-          Invoice #{invoice.id}
+          {labels.invoiceTitle ?? 'Invoice'} #{invoice.id}
         </h1>
         <span className={`invoice-detail-page__badge invoice-detail-page__badge--${invoice.status.toLowerCase()}`}>
           {invoice.status}
@@ -217,37 +219,37 @@ export const InvoiceDetailPage: React.FC<InvoiceDetailPageProps> = ({
       {/* Invoice Information */}
       <div className="invoice-detail-page__info">
         <div className="invoice-detail-page__section">
-          <h2 className="invoice-detail-page__section-title">Details</h2>
+          <h2 className="invoice-detail-page__section-title">{labels.invoiceDetails ?? 'Details'}</h2>
           
           <div className="invoice-detail-page__info-grid">
             <div className="invoice-detail-page__info-item">
-              <span className="invoice-detail-page__label">Creator:</span>
+              <span className="invoice-detail-page__label">{labels.creator ?? 'Creator'}:</span>
               <span className="invoice-detail-page__value">{invoice.creator}</span>
             </div>
 
             <div className="invoice-detail-page__info-item">
-              <span className="invoice-detail-page__label">Total Amount:</span>
+              <span className="invoice-detail-page__label">{labels.totalAmount ?? 'Total Amount'}:</span>
               <span className="invoice-detail-page__value">
                 {formatAmount(totalAmount)} USDC
               </span>
             </div>
 
             <div className="invoice-detail-page__info-item">
-              <span className="invoice-detail-page__label">Funded:</span>
+              <span className="invoice-detail-page__label">{labels.funded ?? 'Funded'}:</span>
               <span className="invoice-detail-page__value">
                 {formatAmount(invoice.funded)} USDC
               </span>
             </div>
 
             <div className="invoice-detail-page__info-item">
-              <span className="invoice-detail-page__label">Deadline:</span>
+              <span className="invoice-detail-page__label">{labels.deadline ?? 'Deadline'}:</span>
               <span className="invoice-detail-page__value">
                 {new Date(invoice.deadline * 1000).toLocaleString()}
               </span>
             </div>
 
             <div className="invoice-detail-page__info-item">
-              <span className="invoice-detail-page__label">Recipients:</span>
+              <span className="invoice-detail-page__label">{labels.recipients ?? 'Recipients'}:</span>
               <span className="invoice-detail-page__value">
                 {invoice.recipients.length}
               </span>
@@ -257,7 +259,7 @@ export const InvoiceDetailPage: React.FC<InvoiceDetailPageProps> = ({
 
         {/* Recipients List */}
         <div className="invoice-detail-page__section">
-          <h2 className="invoice-detail-page__section-title">Recipients</h2>
+          <h2 className="invoice-detail-page__section-title">{labels.recipients ?? 'Recipients'}</h2>
           <div className="invoice-detail-page__recipients">
             {invoice.recipients.map((recipient, index) => (
               <div key={index} className="invoice-detail-page__recipient">

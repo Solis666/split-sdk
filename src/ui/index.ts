@@ -20,6 +20,15 @@ export type {
 export { InvoiceDetailPage } from './InvoiceDetailPage.js';
 export type { InvoiceDetailPageProps } from './InvoiceDetailPage.js';
 
+export { WhiteLabelProvider, useWhiteLabel } from './WhiteLabelProvider.js';
+export type {
+  WhiteLabelConfig,
+  WhiteLabelContextValue,
+  WhiteLabelLabels,
+  WhiteLabelProviderProps,
+  WhiteLabelTheme,
+} from './WhiteLabelProvider.js';
+
 // Hooks
 export { useInvoiceStream } from './hooks/useInvoiceStream.js';
 export type {
