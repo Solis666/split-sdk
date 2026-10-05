@@ -1,5 +1,5 @@
 import { Horizon } from "@stellar/stellar-sdk";
-import type { InvoiceStatus } from "./types.js";
+import type { Invoice, InvoiceStatus } from "./types.js";
 import { SearchFailedError } from "./errors.js";
 
 /** Query parameters for searching invoices. */
@@ -10,6 +10,12 @@ export interface SearchQuery {
   recipient?: string;
   /** Filter by invoice status. */
   status?: InvoiceStatus;
+}
+
+/** Options for searching invoices by memo. */
+export interface SearchByMemoOptions {
+  /** Match memo text case-sensitively. Defaults to false. */
+  caseSensitive?: boolean;
 }
 
 /** Result of an invoice search. */
@@ -45,4 +51,40 @@ export async function searchInvoices(
   } catch (error) {
     throw new SearchFailedError(error instanceof Error ? error.message : String(error));
   }
+}
+
+/**
+ * Search invoices by a substring in their memo.
+ *
+ * Matching is case-insensitive by default. Invoices without a memo are skipped.
+ *
+ * @param invoices - Invoices to search
+ * @param query - Memo substring to search for
+ * @param opts - Search options
+ * @returns Matching invoices
+ */
+export function searchByMemo(
+  invoices: Invoice[],
+  query: string,
+  opts: SearchByMemoOptions = {},
+): Invoice[] {
+  const caseSensitive = opts.caseSensitive ?? false;
+
+  if (query === "") {
+    return invoices;
+  }
+
+  const needle = caseSensitive ? query : query.toLowerCase();
+
+  return invoices.filter((invoice) => {
+    if (invoice.memo == null) {
+      return false;
+    }
+
+    const memo = caseSensitive
+      ? invoice.memo
+      : invoice.memo.toLowerCase();
+
+    return memo.includes(needle);
+  });
 }

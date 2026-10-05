@@ -1714,3 +1714,10 @@ export type {
   RetirementManagerOptions,
   RetirementEventMap,
 } from "./invoiceRetirement.js";
+
+// ---------------------------------------------------------------------------
+// #614 — Invoice memo search
+// ---------------------------------------------------------------------------
+
+export { searchByMemo } from "./search.js";
+export type { SearchByMemoOptions } from "./search.js";
